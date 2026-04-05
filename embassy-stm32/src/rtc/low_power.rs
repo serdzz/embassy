@@ -91,7 +91,11 @@ impl Rtc {
                 // there is a table for every "Event input" / "EXTI Line".
                 // If you find the EXTI line related to "RTC wakeup" marks as "Configurable" (not "Direct"),
                 // then write 1 to related field of Pending Register, to clean it's pending state.
-                #[cfg(any(exti_v1, stm32h7, stm32wb))]
+                // On chips where EXTI line for RTC wakeup is "Configurable" (not "Direct"),
+                // the EXTI pending register bit must be cleared manually after the interrupt fires.
+                // Without this, the pending bit causes WFI to return immediately on next sleep,
+                // creating rapid cycling that prevents long timers (> 0xc000 ticks) from firing.
+                #[cfg(any(exti_v1, stm32h7, stm32wb, stm32l0, stm32l1))]
                 crate::pac::EXTI
                     .pr(0)
                     .modify(|w| w.set_line(RTC::EXTI_WAKEUP_LINE, true));

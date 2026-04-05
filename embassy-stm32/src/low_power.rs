@@ -176,7 +176,7 @@ mod platform {
             v.set_svos(vals::Svos::SCALE3);
         });
 
-        #[cfg(stm32l0)]
+        #[cfg(any(stm32l0, stm32l1))]
         {
             use crate::pac::pwr::vals::Pdds;
             crate::pac::PWR.cr().modify(|w| {
@@ -205,13 +205,13 @@ mod platform {
         #[cfg(stm32wba)]
         crate::pac::PWR.sr().modify(|w| w.set_cssf(true));
 
-        #[cfg(stm32l0)]
+        #[cfg(any(stm32l0, stm32l1))]
         crate::pac::PWR.cr().modify(|w| w.set_cwuf(true));
     }
 
     /// Exit stop mode, reinitializing timer and rcc if required
     pub fn exit_stop(_cs: CriticalSection) {
-        #[cfg(any(stm32l0, stm32wl, stm32wb, stm32wba))]
+        #[cfg(any(stm32l0, stm32l1, stm32wl, stm32wb, stm32wba))]
         {
             // stm32wl5x is dual core and we don't want BOTH cores to re-initialize RCC so we hold a lock
             #[cfg(stm32wl5x)]
@@ -223,11 +223,11 @@ mod platform {
             #[cfg(stm32wba)]
             let es = crate::pac::PWR.sr().read();
 
-            #[cfg(stm32l0)]
+            #[cfg(any(stm32l0, stm32l1))]
             let es = crate::pac::PWR.csr().read();
 
             // we need to re-initialize RCC if *BOTH* cores have been in some STOP mode!
-            #[cfg(any(stm32l0, stm32wl, stm32wba))]
+            #[cfg(any(stm32l0, stm32l1, stm32wl, stm32wba))]
             let re_initialize_rcc = {
                 #[cfg(stm32wl5x)]
                 {
@@ -242,7 +242,7 @@ mod platform {
                 {
                     es.stopf()
                 }
-                #[cfg(stm32l0)]
+                #[cfg(any(stm32l0, stm32l1))]
                 {
                     es.wuf()
                 }
@@ -264,7 +264,7 @@ mod platform {
                 }
             };
 
-            #[cfg(any(stm32l0, stm32wl, stm32wba))]
+            #[cfg(any(stm32l0, stm32l1, stm32wl, stm32wba))]
             if re_initialize_rcc {
                 // when we wake from any stop mode we need to re-initialize the rcc
                 crate::rcc::reinit_saved(_cs);
@@ -305,6 +305,12 @@ mod platform {
             #[cfg(stm32l0)]
             match es.wuf() {
                 true => debug!("low power: L0 has been in stop"),
+                _ => {}
+            };
+
+            #[cfg(stm32l1)]
+            match es.wuf() {
+                true => debug!("low power: L1 has been in stop"),
                 _ => {}
             };
 
@@ -356,9 +362,9 @@ fn configure_pwr(cs: CriticalSection) {
     } else if platform::enter_stop(cs, stop_mode).is_err() {
         warn!("low_power: failed to enter stop");
     } else {
-        #[cfg(stm32l0)]
+        #[cfg(any(stm32l0, stm32l1))]
         trace!("low power: enter stop");
-        #[cfg(not(stm32l0))]
+        #[cfg(not(any(stm32l0, stm32l1)))]
         trace!("low power: enter stop: {}", stop_mode);
 
         STOP_ENTERED.store(true, Ordering::Release);
