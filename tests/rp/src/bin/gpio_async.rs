@@ -1,12 +1,15 @@
 #![no_std]
 #![no_main]
-#![feature(type_alias_impl_trait)]
+#[cfg(feature = "rp2040")]
+teleprobe_meta::target!(b"rpi-pico");
+#[cfg(feature = "rp235xb")]
+teleprobe_meta::target!(b"pimoroni-pico-plus-2");
 
 use defmt::{assert, *};
 use embassy_executor::Spawner;
+use embassy_futures::join::join;
 use embassy_rp::gpio::{Input, Level, Output, Pull};
 use embassy_time::{Duration, Instant, Timer};
-use futures::future::join;
 use {defmt_rtt as _, panic_probe as _};
 
 #[embassy_executor::main]
@@ -19,14 +22,14 @@ async fn main(_spawner: Spawner) {
 
     {
         info!("test wait_for_high");
-        let mut output = Output::new(&mut output_pin, Level::Low);
-        let mut input = Input::new(&mut input_pin, Pull::None);
+        let mut output = Output::new(output_pin.reborrow(), Level::Low);
+        let mut input = Input::new(input_pin.reborrow(), Pull::None);
 
         assert!(input.is_low(), "input was expected to be low");
 
         let set_high_future = async {
             // Allow time for wait_for_high_future to await wait_for_high().
-            Timer::after(Duration::from_millis(10)).await;
+            Timer::after_millis(10).await;
             output.set_high();
         };
         let wait_for_high_future = async {
@@ -40,13 +43,13 @@ async fn main(_spawner: Spawner) {
 
     {
         info!("test wait_for_low");
-        let mut output = Output::new(&mut output_pin, Level::High);
-        let mut input = Input::new(&mut input_pin, Pull::None);
+        let mut output = Output::new(output_pin.reborrow(), Level::High);
+        let mut input = Input::new(input_pin.reborrow(), Pull::None);
 
         assert!(input.is_high(), "input was expected to be high");
 
         let set_low_future = async {
-            Timer::after(Duration::from_millis(10)).await;
+            Timer::after_millis(10).await;
             output.set_low();
         };
         let wait_for_low_future = async {
@@ -60,13 +63,13 @@ async fn main(_spawner: Spawner) {
 
     {
         info!("test wait_for_rising_edge");
-        let mut output = Output::new(&mut output_pin, Level::Low);
-        let mut input = Input::new(&mut input_pin, Pull::None);
+        let mut output = Output::new(output_pin.reborrow(), Level::Low);
+        let mut input = Input::new(input_pin.reborrow(), Pull::None);
 
         assert!(input.is_low(), "input was expected to be low");
 
         let set_high_future = async {
-            Timer::after(Duration::from_millis(10)).await;
+            Timer::after_millis(10).await;
             output.set_high();
         };
         let wait_for_rising_edge_future = async {
@@ -80,13 +83,13 @@ async fn main(_spawner: Spawner) {
 
     {
         info!("test wait_for_falling_edge");
-        let mut output = Output::new(&mut output_pin, Level::High);
-        let mut input = Input::new(&mut input_pin, Pull::None);
+        let mut output = Output::new(output_pin.reborrow(), Level::High);
+        let mut input = Input::new(input_pin.reborrow(), Pull::None);
 
         assert!(input.is_high(), "input was expected to be high");
 
         let set_low_future = async {
-            Timer::after(Duration::from_millis(10)).await;
+            Timer::after_millis(10).await;
             output.set_low();
         };
         let wait_for_falling_edge_future = async {
@@ -100,13 +103,13 @@ async fn main(_spawner: Spawner) {
 
     {
         info!("test wait_for_any_edge (falling)");
-        let mut output = Output::new(&mut output_pin, Level::High);
-        let mut input = Input::new(&mut input_pin, Pull::None);
+        let mut output = Output::new(output_pin.reborrow(), Level::High);
+        let mut input = Input::new(input_pin.reborrow(), Pull::None);
 
         assert!(input.is_high(), "input was expected to be high");
 
         let set_low_future = async {
-            Timer::after(Duration::from_millis(10)).await;
+            Timer::after_millis(10).await;
             output.set_low();
         };
         let wait_for_any_edge_future = async {
@@ -120,13 +123,13 @@ async fn main(_spawner: Spawner) {
 
     {
         info!("test wait_for_any_edge (rising)");
-        let mut output = Output::new(&mut output_pin, Level::Low);
-        let mut input = Input::new(&mut input_pin, Pull::None);
+        let mut output = Output::new(output_pin.reborrow(), Level::Low);
+        let mut input = Input::new(input_pin.reborrow(), Pull::None);
 
         assert!(input.is_low(), "input was expected to be low");
 
         let set_high_future = async {
-            Timer::after(Duration::from_millis(10)).await;
+            Timer::after_millis(10).await;
             output.set_high();
         };
         let wait_for_any_edge_future = async {

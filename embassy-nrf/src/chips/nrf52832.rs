@@ -1,4 +1,4 @@
-pub use nrf52832_pac as pac;
+pub use nrf_pac as pac;
 
 /// The maximum buffer size that the EasyDMA can send/recv in one operation.
 pub const EASY_DMA_SIZE: usize = (1 << 8) - 1;
@@ -10,9 +10,13 @@ pub const FORCE_COPY_BUFFER_SIZE: usize = 255;
 // nrf52832xxAB = 256kb
 pub const FLASH_SIZE: usize = 512 * 1024;
 
-embassy_hal_common::peripherals! {
+pub const RESET_PIN: u32 = 21;
+pub const APPROTECT_MIN_BUILD_CODE: u8 = b'G';
+
+embassy_hal_internal::peripherals! {
     // RTC
     RTC0,
+    #[cfg(not(feature="time-driver-rtc1"))]
     RTC1,
     RTC2,
 
@@ -109,7 +113,9 @@ embassy_hal_common::peripherals! {
     P0_06,
     P0_07,
     P0_08,
+    #[cfg(feature = "nfc-pins-as-gpio")]
     P0_09,
+    #[cfg(feature = "nfc-pins-as-gpio")]
     P0_10,
     P0_11,
     P0_12,
@@ -121,6 +127,7 @@ embassy_hal_common::peripherals! {
     P0_18,
     P0_19,
     P0_20,
+    #[cfg(feature="reset-pin-as-gpio")]
     P0_21,
     P0_22,
     P0_23,
@@ -138,20 +145,58 @@ embassy_hal_common::peripherals! {
 
     // QDEC
     QDEC,
+
+    // I2S
+    I2S,
+
+    // PDM
+    PDM,
+
+    // Radio
+    RADIO,
+
+    // EGU
+    EGU0,
+    EGU1,
+    EGU2,
+    EGU3,
+    EGU4,
+    EGU5,
+
+    // NFC
+    NFCT,
 }
 
-impl_uarte!(UARTE0, UARTE0, UARTE0_UART0);
+impl_uarte!(UARTE0, UARTE0, UARTE0);
 
-impl_spim!(TWISPI0, SPIM0, SPIM0_SPIS0_TWIM0_TWIS0_SPI0_TWI0);
-impl_spim!(TWISPI1, SPIM1, SPIM1_SPIS1_TWIM1_TWIS1_SPI1_TWI1);
-impl_spim!(SPI2, SPIM2, SPIM2_SPIS2_SPI2);
+impl_spim!(TWISPI0, SPIM0, TWISPI0);
+impl_spim!(TWISPI1, SPIM1, TWISPI1);
+impl_spim!(SPI2, SPIM2, SPI2);
 
-impl_twim!(TWISPI0, TWIM0, SPIM0_SPIS0_TWIM0_TWIS0_SPI0_TWI0);
-impl_twim!(TWISPI1, TWIM1, SPIM1_SPIS1_TWIM1_TWIS1_SPI1_TWI1);
+impl_spis!(TWISPI0, SPIS0, TWISPI0);
+impl_spis!(TWISPI1, SPIS1, TWISPI1);
+impl_spis!(SPI2, SPIS2, SPI2);
+
+impl_twim!(TWISPI0, TWIM0, TWISPI0);
+impl_twim!(TWISPI1, TWIM1, TWISPI1);
+
+impl_twis!(TWISPI0, TWIS0, TWISPI0);
+impl_twis!(TWISPI1, TWIS1, TWISPI1);
+
+impl_rtc!(RTC0, RTC0, RTC0);
+#[cfg(not(feature = "time-driver-rtc1"))]
+impl_rtc!(RTC1, RTC1, RTC1);
+impl_rtc!(RTC2, RTC2, RTC2);
 
 impl_pwm!(PWM0, PWM0, PWM0);
 impl_pwm!(PWM1, PWM1, PWM1);
 impl_pwm!(PWM2, PWM2, PWM2);
+
+impl_pdm!(PDM, PDM, PDM);
+
+impl_qdec!(QDEC, QDEC, QDEC);
+
+impl_rng!(RNG, RNG, RNG);
 
 impl_timer!(TIMER0, TIMER0, TIMER0);
 impl_timer!(TIMER1, TIMER1, TIMER1);
@@ -168,7 +213,9 @@ impl_pin!(P0_05, 0, 5);
 impl_pin!(P0_06, 0, 6);
 impl_pin!(P0_07, 0, 7);
 impl_pin!(P0_08, 0, 8);
+#[cfg(feature = "nfc-pins-as-gpio")]
 impl_pin!(P0_09, 0, 9);
+#[cfg(feature = "nfc-pins-as-gpio")]
 impl_pin!(P0_10, 0, 10);
 impl_pin!(P0_11, 0, 11);
 impl_pin!(P0_12, 0, 12);
@@ -180,6 +227,7 @@ impl_pin!(P0_17, 0, 17);
 impl_pin!(P0_18, 0, 18);
 impl_pin!(P0_19, 0, 19);
 impl_pin!(P0_20, 0, 20);
+#[cfg(feature = "reset-pin-as-gpio")]
 impl_pin!(P0_21, 0, 21);
 impl_pin!(P0_22, 0, 22);
 impl_pin!(P0_23, 0, 23);
@@ -192,88 +240,104 @@ impl_pin!(P0_29, 0, 29);
 impl_pin!(P0_30, 0, 30);
 impl_pin!(P0_31, 0, 31);
 
-impl_ppi_channel!(PPI_CH0, 0 => configurable);
-impl_ppi_channel!(PPI_CH1, 1 => configurable);
-impl_ppi_channel!(PPI_CH2, 2 => configurable);
-impl_ppi_channel!(PPI_CH3, 3 => configurable);
-impl_ppi_channel!(PPI_CH4, 4 => configurable);
-impl_ppi_channel!(PPI_CH5, 5 => configurable);
-impl_ppi_channel!(PPI_CH6, 6 => configurable);
-impl_ppi_channel!(PPI_CH7, 7 => configurable);
-impl_ppi_channel!(PPI_CH8, 8 => configurable);
-impl_ppi_channel!(PPI_CH9, 9 => configurable);
-impl_ppi_channel!(PPI_CH10, 10 => configurable);
-impl_ppi_channel!(PPI_CH11, 11 => configurable);
-impl_ppi_channel!(PPI_CH12, 12 => configurable);
-impl_ppi_channel!(PPI_CH13, 13 => configurable);
-impl_ppi_channel!(PPI_CH14, 14 => configurable);
-impl_ppi_channel!(PPI_CH15, 15 => configurable);
-impl_ppi_channel!(PPI_CH16, 16 => configurable);
-impl_ppi_channel!(PPI_CH17, 17 => configurable);
-impl_ppi_channel!(PPI_CH18, 18 => configurable);
-impl_ppi_channel!(PPI_CH19, 19 => configurable);
-impl_ppi_channel!(PPI_CH20, 20 => static);
-impl_ppi_channel!(PPI_CH21, 21 => static);
-impl_ppi_channel!(PPI_CH22, 22 => static);
-impl_ppi_channel!(PPI_CH23, 23 => static);
-impl_ppi_channel!(PPI_CH24, 24 => static);
-impl_ppi_channel!(PPI_CH25, 25 => static);
-impl_ppi_channel!(PPI_CH26, 26 => static);
-impl_ppi_channel!(PPI_CH27, 27 => static);
-impl_ppi_channel!(PPI_CH28, 28 => static);
-impl_ppi_channel!(PPI_CH29, 29 => static);
-impl_ppi_channel!(PPI_CH30, 30 => static);
-impl_ppi_channel!(PPI_CH31, 31 => static);
+impl_ppi_channel!(PPI_CH0, PPI, 0 => configurable);
+impl_ppi_channel!(PPI_CH1, PPI, 1 => configurable);
+impl_ppi_channel!(PPI_CH2, PPI, 2 => configurable);
+impl_ppi_channel!(PPI_CH3, PPI, 3 => configurable);
+impl_ppi_channel!(PPI_CH4, PPI, 4 => configurable);
+impl_ppi_channel!(PPI_CH5, PPI, 5 => configurable);
+impl_ppi_channel!(PPI_CH6, PPI, 6 => configurable);
+impl_ppi_channel!(PPI_CH7, PPI, 7 => configurable);
+impl_ppi_channel!(PPI_CH8, PPI, 8 => configurable);
+impl_ppi_channel!(PPI_CH9, PPI, 9 => configurable);
+impl_ppi_channel!(PPI_CH10, PPI, 10 => configurable);
+impl_ppi_channel!(PPI_CH11, PPI, 11 => configurable);
+impl_ppi_channel!(PPI_CH12, PPI, 12 => configurable);
+impl_ppi_channel!(PPI_CH13, PPI, 13 => configurable);
+impl_ppi_channel!(PPI_CH14, PPI, 14 => configurable);
+impl_ppi_channel!(PPI_CH15, PPI, 15 => configurable);
+impl_ppi_channel!(PPI_CH16, PPI, 16 => configurable);
+impl_ppi_channel!(PPI_CH17, PPI, 17 => configurable);
+impl_ppi_channel!(PPI_CH18, PPI, 18 => configurable);
+impl_ppi_channel!(PPI_CH19, PPI, 19 => configurable);
+impl_ppi_channel!(PPI_CH20, PPI, 20 => static);
+impl_ppi_channel!(PPI_CH21, PPI, 21 => static);
+impl_ppi_channel!(PPI_CH22, PPI, 22 => static);
+impl_ppi_channel!(PPI_CH23, PPI, 23 => static);
+impl_ppi_channel!(PPI_CH24, PPI, 24 => static);
+impl_ppi_channel!(PPI_CH25, PPI, 25 => static);
+impl_ppi_channel!(PPI_CH26, PPI, 26 => static);
+impl_ppi_channel!(PPI_CH27, PPI, 27 => static);
+impl_ppi_channel!(PPI_CH28, PPI, 28 => static);
+impl_ppi_channel!(PPI_CH29, PPI, 29 => static);
+impl_ppi_channel!(PPI_CH30, PPI, 30 => static);
+impl_ppi_channel!(PPI_CH31, PPI, 31 => static);
 
-impl_saadc_input!(P0_02, ANALOGINPUT0);
-impl_saadc_input!(P0_03, ANALOGINPUT1);
-impl_saadc_input!(P0_04, ANALOGINPUT2);
-impl_saadc_input!(P0_05, ANALOGINPUT3);
-impl_saadc_input!(P0_28, ANALOGINPUT4);
-impl_saadc_input!(P0_29, ANALOGINPUT5);
-impl_saadc_input!(P0_30, ANALOGINPUT6);
-impl_saadc_input!(P0_31, ANALOGINPUT7);
+impl_ppi_group!(PPI_GROUP0, PPI, 0);
+impl_ppi_group!(PPI_GROUP1, PPI, 1);
+impl_ppi_group!(PPI_GROUP2, PPI, 2);
+impl_ppi_group!(PPI_GROUP3, PPI, 3);
+impl_ppi_group!(PPI_GROUP4, PPI, 4);
+impl_ppi_group!(PPI_GROUP5, PPI, 5);
 
-pub mod irqs {
-    use embassy_cortex_m::interrupt::_export::declare;
+impl_saadc_input!(P0_02, ANALOG_INPUT0);
+impl_saadc_input!(P0_03, ANALOG_INPUT1);
+impl_saadc_input!(P0_04, ANALOG_INPUT2);
+impl_saadc_input!(P0_05, ANALOG_INPUT3);
+impl_saadc_input!(P0_28, ANALOG_INPUT4);
+impl_saadc_input!(P0_29, ANALOG_INPUT5);
+impl_saadc_input!(P0_30, ANALOG_INPUT6);
+impl_saadc_input!(P0_31, ANALOG_INPUT7);
 
-    use crate::pac::Interrupt as InterruptEnum;
+impl_i2s!(I2S, I2S, I2S);
 
-    declare!(POWER_CLOCK);
-    declare!(RADIO);
-    declare!(UARTE0_UART0);
-    declare!(SPIM0_SPIS0_TWIM0_TWIS0_SPI0_TWI0);
-    declare!(SPIM1_SPIS1_TWIM1_TWIS1_SPI1_TWI1);
-    declare!(NFCT);
-    declare!(GPIOTE);
-    declare!(SAADC);
-    declare!(TIMER0);
-    declare!(TIMER1);
-    declare!(TIMER2);
-    declare!(RTC0);
-    declare!(TEMP);
-    declare!(RNG);
-    declare!(ECB);
-    declare!(CCM_AAR);
-    declare!(WDT);
-    declare!(RTC1);
-    declare!(QDEC);
-    declare!(COMP_LPCOMP);
-    declare!(SWI0_EGU0);
-    declare!(SWI1_EGU1);
-    declare!(SWI2_EGU2);
-    declare!(SWI3_EGU3);
-    declare!(SWI4_EGU4);
-    declare!(SWI5_EGU5);
-    declare!(TIMER3);
-    declare!(TIMER4);
-    declare!(PWM0);
-    declare!(PDM);
-    declare!(MWU);
-    declare!(PWM1);
-    declare!(PWM2);
-    declare!(SPIM2_SPIS2_SPI2);
-    declare!(RTC2);
-    declare!(I2S);
-    declare!(FPU);
-}
+impl_radio!(RADIO, RADIO, RADIO);
+
+impl_egu!(EGU0, EGU0, EGU0_SWI0);
+impl_egu!(EGU1, EGU1, EGU1_SWI1);
+impl_egu!(EGU2, EGU2, EGU2_SWI2);
+impl_egu!(EGU3, EGU3, EGU3_SWI3);
+impl_egu!(EGU4, EGU4, EGU4_SWI4);
+impl_egu!(EGU5, EGU5, EGU5_SWI5);
+
+impl_wdt!(WDT, WDT, WDT, 0);
+
+embassy_hal_internal::interrupt_mod!(
+    CLOCK_POWER,
+    RADIO,
+    UARTE0,
+    TWISPI0,
+    TWISPI1,
+    NFCT,
+    GPIOTE,
+    SAADC,
+    TIMER0,
+    TIMER1,
+    TIMER2,
+    RTC0,
+    TEMP,
+    RNG,
+    ECB,
+    AAR_CCM,
+    WDT,
+    RTC1,
+    QDEC,
+    COMP_LPCOMP,
+    EGU0_SWI0,
+    EGU1_SWI1,
+    EGU2_SWI2,
+    EGU3_SWI3,
+    EGU4_SWI4,
+    EGU5_SWI5,
+    TIMER3,
+    TIMER4,
+    PWM0,
+    PDM,
+    MWU,
+    PWM1,
+    PWM2,
+    SPI2,
+    RTC2,
+    I2S,
+    FPU,
+);

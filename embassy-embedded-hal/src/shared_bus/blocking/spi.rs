@@ -2,13 +2,12 @@
 //!
 //! # Example (nrf52)
 //!
-//! ```rust
+//! ```rust,ignore
 //! use embassy_embedded_hal::shared_bus::blocking::spi::SpiDevice;
 //! use embassy_sync::blocking_mutex::{NoopMutex, raw::NoopRawMutex};
 //!
 //! static SPI_BUS: StaticCell<NoopMutex<RefCell<Spim<SPI3>>>> = StaticCell::new();
-//! let irq = interrupt::take!(SPIM3);
-//! let spi = Spim::new_txonly(p.SPI3, irq, p.P0_15, p.P0_18, Config::default());
+//! let spi = Spim::new_txonly(p.SPI3, Irqs, p.P0_15, p.P0_18, Config::default());
 //! let spi_bus = NoopMutex::new(RefCell::new(spi));
 //! let spi_bus = SPI_BUS.init(spi_bus);
 //!
@@ -20,14 +19,13 @@
 
 use core::cell::RefCell;
 
-use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::Mutex;
-use embedded_hal_1::digital::blocking::OutputPin;
-use embedded_hal_1::spi;
-use embedded_hal_1::spi::blocking::SpiBusFlush;
+use embassy_sync::blocking_mutex::raw::RawMutex;
+use embedded_hal_1::digital::OutputPin;
+use embedded_hal_1::spi::{self, Operation, SpiBus};
 
-use crate::shared_bus::SpiDeviceError;
 use crate::SetConfig;
+use crate::shared_bus::SpiDeviceError;
 
 /// SPI device on a shared bus.
 pub struct SpiDevice<'a, M: RawMutex, BUS, CS> {
@@ -50,71 +48,45 @@ where
     type Error = SpiDeviceError<BUS::Error, CS::Error>;
 }
 
-impl<BUS, M, CS> embedded_hal_1::spi::blocking::SpiDevice for SpiDevice<'_, M, BUS, CS>
+impl<BUS, M, CS, Word> embedded_hal_1::spi::SpiDevice<Word> for SpiDevice<'_, M, BUS, CS>
 where
     M: RawMutex,
-    BUS: SpiBusFlush,
+    BUS: SpiBus<Word>,
     CS: OutputPin,
+    Word: Copy + 'static,
 {
-    type Bus = BUS;
+    fn transaction(&mut self, operations: &mut [embedded_hal_1::spi::Operation<'_, Word>]) -> Result<(), Self::Error> {
+        if cfg!(not(feature = "time")) && operations.iter().any(|op| matches!(op, Operation::DelayNs(_))) {
+            return Err(SpiDeviceError::DelayNotSupported);
+        }
 
-    fn transaction<R>(&mut self, f: impl FnOnce(&mut Self::Bus) -> Result<R, BUS::Error>) -> Result<R, Self::Error> {
         self.bus.lock(|bus| {
             let mut bus = bus.borrow_mut();
             self.cs.set_low().map_err(SpiDeviceError::Cs)?;
 
-            let f_res = f(&mut bus);
+            let op_res = operations.iter_mut().try_for_each(|op| match op {
+                Operation::Read(buf) => bus.read(buf),
+                Operation::Write(buf) => bus.write(buf),
+                Operation::Transfer(read, write) => bus.transfer(read, write),
+                Operation::TransferInPlace(buf) => bus.transfer_in_place(buf),
+                #[cfg(not(feature = "time"))]
+                Operation::DelayNs(_) => unreachable!(),
+                #[cfg(feature = "time")]
+                Operation::DelayNs(ns) => {
+                    embassy_time::block_for(embassy_time::Duration::from_nanos(*ns as _));
+                    Ok(())
+                }
+            });
 
             // On failure, it's important to still flush and deassert CS.
             let flush_res = bus.flush();
             let cs_res = self.cs.set_high();
 
-            let f_res = f_res.map_err(SpiDeviceError::Spi)?;
+            op_res.map_err(SpiDeviceError::Spi)?;
             flush_res.map_err(SpiDeviceError::Spi)?;
             cs_res.map_err(SpiDeviceError::Cs)?;
 
-            Ok(f_res)
-        })
-    }
-}
-
-impl<'d, M, BUS, CS, BusErr, CsErr> embedded_hal_02::blocking::spi::Transfer<u8> for SpiDevice<'_, M, BUS, CS>
-where
-    M: RawMutex,
-    BUS: embedded_hal_02::blocking::spi::Transfer<u8, Error = BusErr>,
-    CS: OutputPin<Error = CsErr>,
-{
-    type Error = SpiDeviceError<BusErr, CsErr>;
-    fn transfer<'w>(&mut self, words: &'w mut [u8]) -> Result<&'w [u8], Self::Error> {
-        self.bus.lock(|bus| {
-            let mut bus = bus.borrow_mut();
-            self.cs.set_low().map_err(SpiDeviceError::Cs)?;
-            let f_res = bus.transfer(words);
-            let cs_res = self.cs.set_high();
-            let f_res = f_res.map_err(SpiDeviceError::Spi)?;
-            cs_res.map_err(SpiDeviceError::Cs)?;
-            Ok(f_res)
-        })
-    }
-}
-
-impl<'d, M, BUS, CS, BusErr, CsErr> embedded_hal_02::blocking::spi::Write<u8> for SpiDevice<'_, M, BUS, CS>
-where
-    M: RawMutex,
-    BUS: embedded_hal_02::blocking::spi::Write<u8, Error = BusErr>,
-    CS: OutputPin<Error = CsErr>,
-{
-    type Error = SpiDeviceError<BusErr, CsErr>;
-
-    fn write(&mut self, words: &[u8]) -> Result<(), Self::Error> {
-        self.bus.lock(|bus| {
-            let mut bus = bus.borrow_mut();
-            self.cs.set_low().map_err(SpiDeviceError::Cs)?;
-            let f_res = bus.write(words);
-            let cs_res = self.cs.set_high();
-            let f_res = f_res.map_err(SpiDeviceError::Spi)?;
-            cs_res.map_err(SpiDeviceError::Cs)?;
-            Ok(f_res)
+            Ok(())
         })
     }
 }
@@ -135,6 +107,11 @@ impl<'a, M: RawMutex, BUS: SetConfig, CS> SpiDeviceWithConfig<'a, M, BUS, CS> {
     pub fn new(bus: &'a Mutex<M, RefCell<BUS>>, cs: CS, config: BUS::Config) -> Self {
         Self { bus, cs, config }
     }
+
+    /// Change the device's config at runtime
+    pub fn set_config(&mut self, config: BUS::Config) {
+        self.config = config;
+    }
 }
 
 impl<'a, M, BUS, CS> spi::ErrorType for SpiDeviceWithConfig<'a, M, BUS, CS>
@@ -146,30 +123,45 @@ where
     type Error = SpiDeviceError<BUS::Error, CS::Error>;
 }
 
-impl<BUS, M, CS> embedded_hal_1::spi::blocking::SpiDevice for SpiDeviceWithConfig<'_, M, BUS, CS>
+impl<BUS, M, CS, Word> embedded_hal_1::spi::SpiDevice<Word> for SpiDeviceWithConfig<'_, M, BUS, CS>
 where
     M: RawMutex,
-    BUS: SpiBusFlush + SetConfig,
+    BUS: SpiBus<Word> + SetConfig,
     CS: OutputPin,
+    Word: Copy + 'static,
 {
-    type Bus = BUS;
+    fn transaction(&mut self, operations: &mut [embedded_hal_1::spi::Operation<'_, Word>]) -> Result<(), Self::Error> {
+        if cfg!(not(feature = "time")) && operations.iter().any(|op| matches!(op, Operation::DelayNs(_))) {
+            return Err(SpiDeviceError::DelayNotSupported);
+        }
 
-    fn transaction<R>(&mut self, f: impl FnOnce(&mut Self::Bus) -> Result<R, BUS::Error>) -> Result<R, Self::Error> {
         self.bus.lock(|bus| {
             let mut bus = bus.borrow_mut();
-            bus.set_config(&self.config);
+            bus.set_config(&self.config).map_err(|_| SpiDeviceError::Config)?;
             self.cs.set_low().map_err(SpiDeviceError::Cs)?;
 
-            let f_res = f(&mut bus);
+            let op_res = operations.iter_mut().try_for_each(|op| match op {
+                Operation::Read(buf) => bus.read(buf),
+                Operation::Write(buf) => bus.write(buf),
+                Operation::Transfer(read, write) => bus.transfer(read, write),
+                Operation::TransferInPlace(buf) => bus.transfer_in_place(buf),
+                #[cfg(not(feature = "time"))]
+                Operation::DelayNs(_) => unreachable!(),
+                #[cfg(feature = "time")]
+                Operation::DelayNs(ns) => {
+                    embassy_time::block_for(embassy_time::Duration::from_nanos(*ns as _));
+                    Ok(())
+                }
+            });
 
             // On failure, it's important to still flush and deassert CS.
             let flush_res = bus.flush();
             let cs_res = self.cs.set_high();
 
-            let f_res = f_res.map_err(SpiDeviceError::Spi)?;
+            op_res.map_err(SpiDeviceError::Spi)?;
             flush_res.map_err(SpiDeviceError::Spi)?;
             cs_res.map_err(SpiDeviceError::Cs)?;
-            Ok(f_res)
+            Ok(())
         })
     }
 }

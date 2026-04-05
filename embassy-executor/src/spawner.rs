@@ -1,11 +1,11 @@
+use core::future::{Future, poll_fn};
 use core::marker::PhantomData;
 use core::mem;
-use core::ptr::NonNull;
+use core::sync::atomic::Ordering;
 use core::task::Poll;
 
-use futures_util::future::poll_fn;
-
 use super::raw;
+use crate::Metadata;
 
 /// Token to spawn a newly-created task in an executor.
 ///
@@ -23,23 +23,28 @@ use super::raw;
 /// Once you've invoked a task function and obtained a SpawnToken, you *must* spawn it.
 #[must_use = "Calling a task function does nothing on its own. You must spawn the returned SpawnToken, typically with Spawner::spawn()"]
 pub struct SpawnToken<S> {
-    raw_task: Option<NonNull<raw::TaskHeader>>,
+    pub(crate) raw_task: raw::TaskRef,
     phantom: PhantomData<*mut S>,
 }
 
 impl<S> SpawnToken<S> {
-    pub(crate) unsafe fn new(raw_task: NonNull<raw::TaskHeader>) -> Self {
+    pub(crate) unsafe fn new(raw_task: raw::TaskRef) -> Self {
         Self {
-            raw_task: Some(raw_task),
+            raw_task,
             phantom: PhantomData,
         }
     }
 
-    pub(crate) fn new_failed() -> Self {
-        Self {
-            raw_task: None,
-            phantom: PhantomData,
-        }
+    /// Returns the task ID.
+    /// This can be used in combination with rtos-trace to match task names with IDs
+    pub fn id(&self) -> u32 {
+        self.raw_task.id()
+    }
+
+    /// Get the metadata for this task. You can use this to set metadata fields
+    /// prior to spawning it.
+    pub fn metadata(&self) -> &Metadata {
+        self.raw_task.metadata()
     }
 }
 
@@ -51,8 +56,7 @@ impl<S> Drop for SpawnToken<S> {
 }
 
 /// Error returned when spawning a task.
-#[derive(Copy, Clone, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Copy, Clone)]
 pub enum SpawnError {
     /// Too many instances of this task are already running.
     ///
@@ -62,6 +66,37 @@ pub enum SpawnError {
     Busy,
 }
 
+impl core::fmt::Debug for SpawnError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self, f)
+    }
+}
+
+impl core::fmt::Display for SpawnError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            SpawnError::Busy => write!(
+                f,
+                "Busy - Too many instances of this task are already running. Check the `pool_size` attribute of the task."
+            ),
+        }
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for SpawnError {
+    fn format(&self, f: defmt::Formatter) {
+        match self {
+            SpawnError::Busy => defmt::write!(
+                f,
+                "Busy - Too many instances of this task are already running. Check the `pool_size` attribute of the task."
+            ),
+        }
+    }
+}
+
+impl core::error::Error for SpawnError {}
+
 /// Handle to spawn tasks into an executor.
 ///
 /// This Spawner can spawn any task (Send and non-Send ones), but it can
@@ -70,7 +105,7 @@ pub enum SpawnError {
 /// If you want to spawn tasks from another thread, use [SendSpawner].
 #[derive(Copy, Clone)]
 pub struct Spawner {
-    executor: &'static raw::Executor,
+    pub(crate) executor: &'static raw::Executor,
     not_send: PhantomData<*mut ()>,
 }
 
@@ -87,54 +122,59 @@ impl Spawner {
     /// This function is `async` just to get access to the current async
     /// context. It returns instantly, it does not block/yield.
     ///
+    /// Using this method is discouraged due to it being unsafe. Consider the following
+    /// alternatives instead:
+    ///
+    /// - Pass the initial `Spawner` as an argument to tasks. Note that it's `Copy`, so you can
+    ///   make as many copies of it as you want.
+    /// - Use `SendSpawner::for_current_executor()` instead, which is safe but can only be used
+    ///   if task arguments are `Send`.
+    ///
+    /// The only case where using this method is absolutely required is obtaining the `Spawner`
+    /// for an `InterruptExecutor`.
+    ///
+    /// # Safety
+    ///
+    /// You must only execute this with an async `Context` created by the Embassy executor.
+    /// You must not execute it with manually-created `Context`s.
+    ///
     /// # Panics
     ///
     /// Panics if the current executor is not an Embassy executor.
-    pub async fn for_current_executor() -> Self {
-        poll_fn(|cx| unsafe {
+    pub unsafe fn for_current_executor() -> impl Future<Output = Self> {
+        poll_fn(|cx| {
             let task = raw::task_from_waker(cx.waker());
-            let executor = (*task.as_ptr()).executor.get();
-            Poll::Ready(Self::new(&*executor))
+            let executor = unsafe {
+                task.header()
+                    .executor
+                    .load(Ordering::Relaxed)
+                    .as_ref()
+                    .unwrap_unchecked()
+            };
+            let executor = unsafe { raw::Executor::wrap(executor) };
+            Poll::Ready(Self::new(executor))
         })
-        .await
     }
 
     /// Spawn a task into an executor.
     ///
     /// You obtain the `token` by calling a task function (i.e. one marked with `#[embassy_executor::task]`).
-    pub fn spawn<S>(&self, token: SpawnToken<S>) -> Result<(), SpawnError> {
+    pub fn spawn<S>(&self, token: SpawnToken<S>) {
         let task = token.raw_task;
         mem::forget(token);
-
-        match task {
-            Some(task) => {
-                unsafe { self.executor.spawn(task) };
-                Ok(())
-            }
-            None => Err(SpawnError::Busy),
-        }
-    }
-
-    // Used by the `embassy_macros::main!` macro to throw an error when spawn
-    // fails. This is here to allow conditional use of `defmt::unwrap!`
-    // without introducing a `defmt` feature in the `embassy_macros` package,
-    // which would require use of `-Z namespaced-features`.
-    /// Spawn a task into an executor, panicking on failure.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the spawning fails.
-    pub fn must_spawn<S>(&self, token: SpawnToken<S>) {
-        unwrap!(self.spawn(token));
+        unsafe { self.executor.spawn(task) }
     }
 
     /// Convert this Spawner to a SendSpawner. This allows you to send the
     /// spawner to other threads, but the spawner loses the ability to spawn
     /// non-Send tasks.
     pub fn make_send(&self) -> SendSpawner {
-        SendSpawner {
-            executor: self.executor,
-        }
+        SendSpawner::new(&self.executor.inner)
+    }
+
+    /// Return the unique ID of this Spawner's Executor.
+    pub fn executor_id(&self) -> usize {
+        self.executor.id()
     }
 }
 
@@ -147,14 +187,11 @@ impl Spawner {
 /// If you want to spawn non-Send tasks, use [Spawner].
 #[derive(Copy, Clone)]
 pub struct SendSpawner {
-    executor: &'static raw::Executor,
+    executor: &'static raw::SyncExecutor,
 }
 
-unsafe impl Send for SendSpawner {}
-unsafe impl Sync for SendSpawner {}
-
 impl SendSpawner {
-    pub(crate) fn new(executor: &'static raw::Executor) -> Self {
+    pub(crate) fn new(executor: &'static raw::SyncExecutor) -> Self {
         Self { executor }
     }
 
@@ -166,37 +203,26 @@ impl SendSpawner {
     /// # Panics
     ///
     /// Panics if the current executor is not an Embassy executor.
-    pub async fn for_current_executor() -> Self {
-        poll_fn(|cx| unsafe {
+    pub fn for_current_executor() -> impl Future<Output = Self> {
+        poll_fn(|cx| {
             let task = raw::task_from_waker(cx.waker());
-            let executor = (*task.as_ptr()).executor.get();
-            Poll::Ready(Self::new(&*executor))
+            let executor = unsafe {
+                task.header()
+                    .executor
+                    .load(Ordering::Relaxed)
+                    .as_ref()
+                    .unwrap_unchecked()
+            };
+            Poll::Ready(Self::new(executor))
         })
-        .await
     }
 
     /// Spawn a task into an executor.
     ///
     /// You obtain the `token` by calling a task function (i.e. one marked with `#[embassy_executor::task]`).
-    pub fn spawn<S: Send>(&self, token: SpawnToken<S>) -> Result<(), SpawnError> {
+    pub fn spawn<S: Send>(&self, token: SpawnToken<S>) {
         let header = token.raw_task;
         mem::forget(token);
-
-        match header {
-            Some(header) => {
-                unsafe { self.executor.spawn(header) };
-                Ok(())
-            }
-            None => Err(SpawnError::Busy),
-        }
-    }
-
-    /// Spawn a task into an executor, panicking on failure.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the spawning fails.
-    pub fn must_spawn<S: Send>(&self, token: SpawnToken<S>) {
-        unwrap!(self.spawn(token));
+        unsafe { self.executor.spawn(header) }
     }
 }

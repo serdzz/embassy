@@ -1,9 +1,14 @@
 #![macro_use]
 
-use crate::{pac, peripherals};
+use crate::pac;
 
-pub(crate) unsafe fn configure_dmamux(dmamux_regs: pac::dmamux::Dmamux, dmamux_ch_num: u8, request: u8) {
-    let ch_mux_regs = dmamux_regs.ccr(dmamux_ch_num as _);
+pub(crate) struct DmamuxInfo {
+    pub(crate) mux: pac::dmamux::Dmamux,
+    pub(crate) num: usize,
+}
+
+pub(crate) fn configure_dmamux(info: &DmamuxInfo, request: u8) {
+    let ch_mux_regs = info.mux.ccr(info.num);
     ch_mux_regs.write(|reg| {
         reg.set_nbreq(0);
         reg.set_dmareq_id(request);
@@ -14,35 +19,7 @@ pub(crate) unsafe fn configure_dmamux(dmamux_regs: pac::dmamux::Dmamux, dmamux_c
     });
 }
 
-pub(crate) mod sealed {
-    use super::*;
-    pub trait MuxChannel {
-        const DMAMUX_CH_NUM: u8;
-        const DMAMUX_REGS: pac::dmamux::Dmamux;
-    }
-}
-
-pub struct DMAMUX1;
-#[cfg(stm32h7)]
-pub struct DMAMUX2;
-
-pub trait MuxChannel: sealed::MuxChannel + super::Channel {
-    type Mux;
-}
-
-foreach_dma_channel! {
-    ($channel_peri:ident, $dma_peri:ident, $version:ident, $channel_num:expr, $index:expr, {dmamux: $dmamux:ident, dmamux_channel: $dmamux_channel:expr}) => {
-        impl sealed::MuxChannel for peripherals::$channel_peri {
-            const DMAMUX_CH_NUM: u8 = $dmamux_channel;
-            const DMAMUX_REGS: pac::dmamux::Dmamux = pac::$dmamux;
-        }
-        impl MuxChannel for peripherals::$channel_peri {
-            type Mux = $dmamux;
-        }
-    };
-}
-
 /// safety: must be called only once
-pub(crate) unsafe fn init() {
+pub(crate) unsafe fn init(_cs: critical_section::CriticalSection) {
     crate::_generated::init_dmamux();
 }

@@ -1,26 +1,12 @@
-#![feature(type_alias_impl_trait)]
-
 use clap::Parser;
 use embassy_executor::{Executor, Spawner};
-use embassy_net::udp::UdpSocket;
-use embassy_net::{ConfigStrategy, Ipv4Address, Ipv4Cidr, PacketMetadata, Stack, StackResources};
+use embassy_net::udp::{PacketMetadata, UdpSocket};
+use embassy_net::{Config, Ipv4Address, Ipv4Cidr, StackResources};
+use embassy_net_tuntap::TunTapDevice;
 use heapless::Vec;
 use log::*;
-use rand_core::{OsRng, RngCore};
+use rand_core::{OsRng, TryRngCore};
 use static_cell::StaticCell;
-
-#[path = "../tuntap.rs"]
-mod tuntap;
-
-use crate::tuntap::TunTapDevice;
-
-macro_rules! singleton {
-    ($val:expr) => {{
-        type T = impl Sized;
-        static STATIC_CELL: StaticCell<T> = StaticCell::new();
-        STATIC_CELL.init_with(move || $val)
-    }};
-}
 
 #[derive(Parser)]
 #[clap(version = "1.0")]
@@ -34,8 +20,8 @@ struct Opts {
 }
 
 #[embassy_executor::task]
-async fn net_task(stack: &'static Stack<TunTapDevice>) -> ! {
-    stack.run().await
+async fn net_task(mut runner: embassy_net::Runner<'static, TunTapDevice>) -> ! {
+    runner.run().await
 }
 
 #[embassy_executor::task]
@@ -47,30 +33,26 @@ async fn main_task(spawner: Spawner) {
 
     // Choose between dhcp or static ip
     let config = if opts.static_ip {
-        ConfigStrategy::Static(embassy_net::Config {
+        Config::ipv4_static(embassy_net::StaticConfigV4 {
             address: Ipv4Cidr::new(Ipv4Address::new(192, 168, 69, 2), 24),
             dns_servers: Vec::new(),
             gateway: Some(Ipv4Address::new(192, 168, 69, 1)),
         })
     } else {
-        ConfigStrategy::Dhcp
+        Config::dhcpv4(Default::default())
     };
 
     // Generate random seed
     let mut seed = [0; 8];
-    OsRng.fill_bytes(&mut seed);
+    OsRng.try_fill_bytes(&mut seed).unwrap();
     let seed = u64::from_le_bytes(seed);
 
     // Init network stack
-    let stack = &*singleton!(Stack::new(
-        device,
-        config,
-        singleton!(StackResources::<1, 2, 8>::new()),
-        seed
-    ));
+    static RESOURCES: StaticCell<StackResources<3>> = StaticCell::new();
+    let (stack, runner) = embassy_net::new(device, config, RESOURCES.init(StackResources::new()), seed);
 
     // Launch network task
-    spawner.spawn(net_task(stack)).unwrap();
+    spawner.spawn(net_task(runner).unwrap());
 
     // Then we can use it!
     let mut rx_meta = [PacketMetadata::EMPTY; 16];
@@ -104,6 +86,6 @@ fn main() {
 
     let executor = EXECUTOR.init(Executor::new());
     executor.run(|spawner| {
-        spawner.spawn(main_task(spawner)).unwrap();
+        spawner.spawn(main_task(spawner).unwrap());
     });
 }

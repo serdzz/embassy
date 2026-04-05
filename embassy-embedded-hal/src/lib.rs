@@ -1,12 +1,10 @@
-#![cfg_attr(not(feature = "std"), no_std)]
-#![cfg_attr(feature = "nightly", feature(generic_associated_types, type_alias_impl_trait))]
+#![no_std]
+#![allow(async_fn_in_trait)]
 #![warn(missing_docs)]
+#![doc = include_str!("../README.md")]
 
-//! Utilities to use `embedded-hal` traits with Embassy.
-
-#[cfg(feature = "nightly")]
 pub mod adapter;
-
+pub mod flash;
 pub mod shared_bus;
 
 /// Set the configuration of a peripheral driver.
@@ -24,6 +22,18 @@ pub trait SetConfig {
     /// The configuration type used by this driver.
     type Config;
 
+    /// The error type that can occur if `set_config` fails.
+    type ConfigError;
+
     /// Set the configuration of the driver.
-    fn set_config(&mut self, config: &Self::Config);
+    fn set_config(&mut self, config: &Self::Config) -> Result<(), Self::ConfigError>;
+}
+
+/// Get the configuration of a peripheral driver.
+pub trait GetConfig {
+    /// The configuration type used by this driver.
+    type Config;
+
+    /// Get the configuration of the driver.
+    fn get_config(&self) -> Self::Config;
 }

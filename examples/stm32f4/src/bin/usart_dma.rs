@@ -1,15 +1,20 @@
 #![no_std]
 #![no_main]
-#![feature(type_alias_impl_trait)]
 
 use core::fmt::Write;
 
 use defmt::*;
 use embassy_executor::Spawner;
-use embassy_stm32::dma::NoDma;
 use embassy_stm32::usart::{Config, Uart};
+use embassy_stm32::{bind_interrupts, dma, peripherals, usart};
 use heapless::String;
 use {defmt_rtt as _, panic_probe as _};
+
+bind_interrupts!(struct Irqs {
+    USART3 => usart::InterruptHandler<peripherals::USART3>;
+    DMA1_STREAM1 => dma::InterruptHandler<peripherals::DMA1_CH1>;
+    DMA1_STREAM3 => dma::InterruptHandler<peripherals::DMA1_CH3>;
+});
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
@@ -17,7 +22,7 @@ async fn main(_spawner: Spawner) {
     info!("Hello World!");
 
     let config = Config::default();
-    let mut usart = Uart::new(p.USART3, p.PD9, p.PD8, p.DMA1_CH3, NoDma, config);
+    let mut usart = Uart::new(p.USART3, p.PD9, p.PD8, p.DMA1_CH3, p.DMA1_CH1, Irqs, config).unwrap();
 
     for n in 0u32.. {
         let mut s: String<128> = String::new();

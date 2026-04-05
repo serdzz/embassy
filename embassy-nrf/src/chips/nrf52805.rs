@@ -1,4 +1,4 @@
-pub use nrf52805_pac as pac;
+pub use nrf_pac as pac;
 
 /// The maximum buffer size that the EasyDMA can send/recv in one operation.
 pub const EASY_DMA_SIZE: usize = (1 << 14) - 1;
@@ -6,9 +6,13 @@ pub const FORCE_COPY_BUFFER_SIZE: usize = 256;
 
 pub const FLASH_SIZE: usize = 192 * 1024;
 
-embassy_hal_common::peripherals! {
+pub const RESET_PIN: u32 = 21;
+pub const APPROTECT_MIN_BUILD_CODE: u8 = b'B';
+
+embassy_hal_internal::peripherals! {
     // RTC
     RTC0,
+    #[cfg(not(feature="time-driver-rtc1"))]
     RTC1,
 
     // WDT
@@ -108,6 +112,7 @@ embassy_hal_common::peripherals! {
     P0_18,
     P0_19,
     P0_20,
+    #[cfg(feature="reset-pin-as-gpio")]
     P0_21,
     P0_22,
     P0_23,
@@ -125,17 +130,36 @@ embassy_hal_common::peripherals! {
 
     // QDEC
     QDEC,
+
+    // Radio
+    RADIO,
+
+    // EGU
+    EGU0,
+    EGU1,
 }
 
-impl_uarte!(UARTE0, UARTE0, UARTE0_UART0);
+impl_uarte!(UARTE0, UARTE0, UARTE0);
 
-impl_spim!(SPI0, SPIM0, SPIM0_SPIS0_SPI0);
+impl_spim!(SPI0, SPIM0, SPI0);
 
-impl_twim!(TWI0, TWIM0, TWIM0_TWIS0_TWI0);
+impl_spis!(SPI0, SPIS0, SPI0);
+
+impl_twim!(TWI0, TWIM0, TWI0);
+
+impl_twis!(TWI0, TWIS0, TWI0);
+
+impl_qdec!(QDEC, QDEC, QDEC);
+
+impl_rng!(RNG, RNG, RNG);
 
 impl_timer!(TIMER0, TIMER0, TIMER0);
 impl_timer!(TIMER1, TIMER1, TIMER1);
 impl_timer!(TIMER2, TIMER2, TIMER2);
+
+impl_rtc!(RTC0, RTC0, RTC0);
+#[cfg(not(feature = "time-driver-rtc1"))]
+impl_rtc!(RTC1, RTC1, RTC1);
 
 impl_pin!(P0_00, 0, 0);
 impl_pin!(P0_01, 0, 1);
@@ -158,6 +182,7 @@ impl_pin!(P0_17, 0, 17);
 impl_pin!(P0_18, 0, 18);
 impl_pin!(P0_19, 0, 19);
 impl_pin!(P0_20, 0, 20);
+#[cfg(feature = "reset-pin-as-gpio")]
 impl_pin!(P0_21, 0, 21);
 impl_pin!(P0_22, 0, 22);
 impl_pin!(P0_23, 0, 23);
@@ -170,59 +195,69 @@ impl_pin!(P0_29, 0, 29);
 impl_pin!(P0_30, 0, 30);
 impl_pin!(P0_31, 0, 31);
 
-impl_ppi_channel!(PPI_CH0, 0 => configurable);
-impl_ppi_channel!(PPI_CH1, 1 => configurable);
-impl_ppi_channel!(PPI_CH2, 2 => configurable);
-impl_ppi_channel!(PPI_CH3, 3 => configurable);
-impl_ppi_channel!(PPI_CH4, 4 => configurable);
-impl_ppi_channel!(PPI_CH5, 5 => configurable);
-impl_ppi_channel!(PPI_CH6, 6 => configurable);
-impl_ppi_channel!(PPI_CH7, 7 => configurable);
-impl_ppi_channel!(PPI_CH8, 8 => configurable);
-impl_ppi_channel!(PPI_CH9, 9 => configurable);
-impl_ppi_channel!(PPI_CH20, 20 => static);
-impl_ppi_channel!(PPI_CH21, 21 => static);
-impl_ppi_channel!(PPI_CH22, 22 => static);
-impl_ppi_channel!(PPI_CH23, 23 => static);
-impl_ppi_channel!(PPI_CH24, 24 => static);
-impl_ppi_channel!(PPI_CH25, 25 => static);
-impl_ppi_channel!(PPI_CH26, 26 => static);
-impl_ppi_channel!(PPI_CH27, 27 => static);
-impl_ppi_channel!(PPI_CH28, 28 => static);
-impl_ppi_channel!(PPI_CH29, 29 => static);
-impl_ppi_channel!(PPI_CH30, 30 => static);
-impl_ppi_channel!(PPI_CH31, 31 => static);
+impl_ppi_channel!(PPI_CH0, PPI, 0 => configurable);
+impl_ppi_channel!(PPI_CH1, PPI, 1 => configurable);
+impl_ppi_channel!(PPI_CH2, PPI, 2 => configurable);
+impl_ppi_channel!(PPI_CH3, PPI, 3 => configurable);
+impl_ppi_channel!(PPI_CH4, PPI, 4 => configurable);
+impl_ppi_channel!(PPI_CH5, PPI, 5 => configurable);
+impl_ppi_channel!(PPI_CH6, PPI, 6 => configurable);
+impl_ppi_channel!(PPI_CH7, PPI, 7 => configurable);
+impl_ppi_channel!(PPI_CH8, PPI, 8 => configurable);
+impl_ppi_channel!(PPI_CH9, PPI, 9 => configurable);
+impl_ppi_channel!(PPI_CH20, PPI, 20 => static);
+impl_ppi_channel!(PPI_CH21, PPI, 21 => static);
+impl_ppi_channel!(PPI_CH22, PPI, 22 => static);
+impl_ppi_channel!(PPI_CH23, PPI, 23 => static);
+impl_ppi_channel!(PPI_CH24, PPI, 24 => static);
+impl_ppi_channel!(PPI_CH25, PPI, 25 => static);
+impl_ppi_channel!(PPI_CH26, PPI, 26 => static);
+impl_ppi_channel!(PPI_CH27, PPI, 27 => static);
+impl_ppi_channel!(PPI_CH28, PPI, 28 => static);
+impl_ppi_channel!(PPI_CH29, PPI, 29 => static);
+impl_ppi_channel!(PPI_CH30, PPI, 30 => static);
+impl_ppi_channel!(PPI_CH31, PPI, 31 => static);
 
-impl_saadc_input!(P0_04, ANALOGINPUT2);
-impl_saadc_input!(P0_05, ANALOGINPUT3);
+impl_ppi_group!(PPI_GROUP0, PPI, 0);
+impl_ppi_group!(PPI_GROUP1, PPI, 1);
+impl_ppi_group!(PPI_GROUP2, PPI, 2);
+impl_ppi_group!(PPI_GROUP3, PPI, 3);
+impl_ppi_group!(PPI_GROUP4, PPI, 4);
+impl_ppi_group!(PPI_GROUP5, PPI, 5);
 
-pub mod irqs {
-    use embassy_cortex_m::interrupt::_export::declare;
+impl_saadc_input!(P0_04, ANALOG_INPUT2);
+impl_saadc_input!(P0_05, ANALOG_INPUT3);
 
-    use crate::pac::Interrupt as InterruptEnum;
+impl_radio!(RADIO, RADIO, RADIO);
 
-    declare!(POWER_CLOCK);
-    declare!(RADIO);
-    declare!(UARTE0_UART0);
-    declare!(TWIM0_TWIS0_TWI0);
-    declare!(SPIM0_SPIS0_SPI0);
-    declare!(GPIOTE);
-    declare!(SAADC);
-    declare!(TIMER0);
-    declare!(TIMER1);
-    declare!(TIMER2);
-    declare!(RTC0);
-    declare!(TEMP);
-    declare!(RNG);
-    declare!(ECB);
-    declare!(CCM_AAR);
-    declare!(WDT);
-    declare!(RTC1);
-    declare!(QDEC);
-    declare!(SWI0_EGU0);
-    declare!(SWI1_EGU1);
-    declare!(SWI2);
-    declare!(SWI3);
-    declare!(SWI4);
-    declare!(SWI5);
-}
+impl_egu!(EGU0, EGU0, EGU0_SWI0);
+impl_egu!(EGU1, EGU1, EGU1_SWI1);
+
+impl_wdt!(WDT, WDT, WDT, 0);
+
+embassy_hal_internal::interrupt_mod!(
+    CLOCK_POWER,
+    RADIO,
+    UARTE0,
+    TWI0,
+    SPI0,
+    GPIOTE,
+    SAADC,
+    TIMER0,
+    TIMER1,
+    TIMER2,
+    TEMP,
+    RNG,
+    ECB,
+    AAR_CCM,
+    WDT,
+    RTC0,
+    RTC1,
+    QDEC,
+    EGU0_SWI0,
+    EGU1_SWI1,
+    SWI2,
+    SWI3,
+    SWI4,
+    SWI5,
+);

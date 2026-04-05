@@ -1,54 +1,45 @@
+//! Timer driver.
+//!
+//! Important note! This driver is very low level. For most time-related use cases, like
+//! "sleep for X seconds", "do something every X seconds", or measuring time, you should
+//! use [`embassy-time`](https://crates.io/crates/embassy-time) instead!
+
 #![macro_use]
 
 use core::marker::PhantomData;
-use core::task::Poll;
 
-use embassy_hal_common::drop::OnDrop;
-use embassy_hal_common::{into_ref, PeripheralRef};
-use embassy_sync::waitqueue::AtomicWaker;
-use futures::future::poll_fn;
+use embassy_hal_internal::{Peri, PeripheralType};
 
-use crate::interrupt::{Interrupt, InterruptExt};
+use crate::pac;
+use crate::pac::timer::vals;
 use crate::ppi::{Event, Task};
-use crate::{pac, Peripheral};
 
-pub(crate) mod sealed {
-
-    use super::*;
-
-    pub trait Instance {
-        /// The number of CC registers this instance has.
-        const CCS: usize;
-        fn regs() -> &'static pac::timer0::RegisterBlock;
-        /// Storage for the waker for CC register `n`.
-        fn waker(n: usize) -> &'static AtomicWaker;
-    }
-    pub trait ExtendedInstance {}
-
-    pub trait TimerType {}
+pub(crate) trait SealedInstance {
+    /// The number of CC registers this instance has.
+    const CCS: usize;
+    fn regs() -> pac::timer::Timer;
 }
 
-pub trait Instance: Peripheral<P = Self> + sealed::Instance + 'static + Send {
-    type Interrupt: Interrupt;
+/// Basic Timer instance.
+#[allow(private_bounds)]
+pub trait Instance: SealedInstance + PeripheralType + 'static + Send {
+    /// Interrupt for this peripheral.
+    type Interrupt: crate::interrupt::typelevel::Interrupt;
 }
-pub trait ExtendedInstance: Instance + sealed::ExtendedInstance {}
+
+/// Extended timer instance.
+pub trait ExtendedInstance: Instance {}
 
 macro_rules! impl_timer {
     ($type:ident, $pac_type:ident, $irq:ident, $ccs:literal) => {
-        impl crate::timer::sealed::Instance for peripherals::$type {
+        impl crate::timer::SealedInstance for peripherals::$type {
             const CCS: usize = $ccs;
-            fn regs() -> &'static pac::timer0::RegisterBlock {
-                unsafe { &*(pac::$pac_type::ptr() as *const pac::timer0::RegisterBlock) }
-            }
-            fn waker(n: usize) -> &'static ::embassy_sync::waitqueue::AtomicWaker {
-                use ::embassy_sync::waitqueue::AtomicWaker;
-                const NEW_AW: AtomicWaker = AtomicWaker::new();
-                static WAKERS: [AtomicWaker; $ccs] = [NEW_AW; $ccs];
-                &WAKERS[n]
+            fn regs() -> pac::timer::Timer {
+                unsafe { pac::timer::Timer::from_ptr(pac::$pac_type.as_ptr()) }
             }
         }
         impl crate::timer::Instance for peripherals::$type {
-            type Interrupt = crate::interrupt::$irq;
+            type Interrupt = crate::interrupt::typelevel::$irq;
         }
     };
     ($type:ident, $pac_type:ident, $irq:ident) => {
@@ -56,94 +47,91 @@ macro_rules! impl_timer {
     };
     ($type:ident, $pac_type:ident, $irq:ident, extended) => {
         impl_timer!($type, $pac_type, $irq, 6);
-        impl crate::timer::sealed::ExtendedInstance for peripherals::$type {}
         impl crate::timer::ExtendedInstance for peripherals::$type {}
     };
 }
 
+/// Timer frequency
 #[repr(u8)]
 pub enum Frequency {
-    // I'd prefer not to prefix these with `F`, but Rust identifiers can't start with digits.
+    /// 16MHz
     F16MHz = 0,
+    /// 8MHz
     F8MHz = 1,
+    /// 4MHz
     F4MHz = 2,
+    /// 2MHz
     F2MHz = 3,
+    /// 1MHz
     F1MHz = 4,
+    /// 500kHz
     F500kHz = 5,
+    /// 250kHz
     F250kHz = 6,
+    /// 125kHz
     F125kHz = 7,
+    /// 62500Hz
     F62500Hz = 8,
+    /// 31250Hz
     F31250Hz = 9,
 }
 
 /// nRF Timer driver.
 ///
 /// The timer has an internal counter, which is incremented for every tick of the timer.
-/// The counter is 32-bit, so it wraps back to 0 at 4294967296.
+/// The counter is 32-bit, so it wraps back to 0 when it reaches 2^32.
 ///
 /// It has either 4 or 6 Capture/Compare registers, which can be used to capture the current state of the counter
 /// or trigger an event when the counter reaches a certain value.
-
-pub trait TimerType: sealed::TimerType {}
-
-pub enum Awaitable {}
-pub enum NotAwaitable {}
-
-impl sealed::TimerType for Awaitable {}
-impl sealed::TimerType for NotAwaitable {}
-impl TimerType for Awaitable {}
-impl TimerType for NotAwaitable {}
-
-pub struct Timer<'d, T: Instance, I: TimerType = NotAwaitable> {
-    _p: PeripheralRef<'d, T>,
-    _i: PhantomData<I>,
+pub struct Timer<'d> {
+    r: pac::timer::Timer,
+    ccs: usize,
+    _p: PhantomData<&'d ()>,
 }
 
-impl<'d, T: Instance> Timer<'d, T, Awaitable> {
-    pub fn new_awaitable(timer: impl Peripheral<P = T> + 'd, irq: impl Peripheral<P = T::Interrupt> + 'd) -> Self {
-        into_ref!(irq);
-
-        irq.set_handler(Self::on_interrupt);
-        irq.unpend();
-        irq.enable();
-
-        Self::new_irqless(timer)
-    }
-}
-impl<'d, T: Instance> Timer<'d, T, NotAwaitable> {
-    /// Create a `Timer` without an interrupt, meaning `Cc::wait` won't work.
+impl<'d> Timer<'d> {
+    /// Create a new `Timer` driver.
     ///
-    /// This can be useful for triggering tasks via PPI
+    /// This can be useful for triggering tasks via PPI.
     /// `Uarte` uses this internally.
-    pub fn new(timer: impl Peripheral<P = T> + 'd) -> Self {
-        Self::new_irqless(timer)
+    pub fn new<T: Instance>(timer: Peri<'d, T>) -> Self {
+        Self::new_inner(timer, false)
     }
-}
 
-impl<'d, T: Instance, I: TimerType> Timer<'d, T, I> {
-    /// Create a `Timer` without an interrupt, meaning `Cc::wait` won't work.
+    /// Create a new `Timer` driver in counter mode.
     ///
-    /// This is used by the public constructors.
-    fn new_irqless(timer: impl Peripheral<P = T> + 'd) -> Self {
-        into_ref!(timer);
+    /// This can be useful for triggering tasks via PPI.
+    /// `Uarte` uses this internally.
+    pub fn new_counter<T: Instance>(timer: Peri<'d, T>) -> Self {
+        Self::new_inner(timer, true)
+    }
 
+    fn new_inner<T: Instance>(_timer: Peri<'d, T>, is_counter: bool) -> Self {
         let regs = T::regs();
 
-        let mut this = Self {
-            _p: timer,
-            _i: PhantomData,
+        let this = Self {
+            r: regs,
+            ccs: T::CCS,
+            _p: PhantomData,
         };
 
         // Stop the timer before doing anything else,
         // since changing BITMODE while running can cause 'unpredictable behaviour' according to the specification.
         this.stop();
 
-        // Set the instance to timer mode.
-        regs.mode.write(|w| w.mode().timer());
+        regs.mode().write(|w| {
+            w.set_mode(match is_counter {
+                #[cfg(not(feature = "_nrf51"))]
+                true => vals::Mode::LOW_POWER_COUNTER,
+                #[cfg(feature = "_nrf51")]
+                true => vals::Mode::COUNTER,
+                false => vals::Mode::TIMER,
+            })
+        });
 
         // Make the counter's max value as high as possible.
         // TODO: is there a reason someone would want to set this lower?
-        regs.bitmode.write(|w| w.bitmode()._32bit());
+        regs.bitmode().write(|w| w.set_bitmode(vals::Bitmode::_32BIT));
 
         // Initialize the counter at 0.
         this.clear();
@@ -151,7 +139,7 @@ impl<'d, T: Instance, I: TimerType> Timer<'d, T, I> {
         // Default to the max frequency of the lower power clock
         this.set_frequency(Frequency::F1MHz);
 
-        for n in 0..T::CCS {
+        for n in 0..this.ccs {
             let cc = this.cc(n);
             // Initialize all the shorts as disabled.
             cc.unshort_compare_clear();
@@ -163,40 +151,55 @@ impl<'d, T: Instance, I: TimerType> Timer<'d, T, I> {
         this
     }
 
+    /// Direct access to the register block.
+    #[cfg(feature = "unstable-pac")]
+    #[inline]
+    pub fn regs(&mut self) -> pac::timer::Timer {
+        self.r
+    }
+
     /// Starts the timer.
     pub fn start(&self) {
-        T::regs().tasks_start.write(|w| unsafe { w.bits(1) })
+        self.r.tasks_start().write_value(1)
     }
 
     /// Stops the timer.
     pub fn stop(&self) {
-        T::regs().tasks_stop.write(|w| unsafe { w.bits(1) })
+        self.r.tasks_stop().write_value(1)
     }
 
     /// Reset the timer's counter to 0.
     pub fn clear(&self) {
-        T::regs().tasks_clear.write(|w| unsafe { w.bits(1) })
+        self.r.tasks_clear().write_value(1)
     }
 
     /// Returns the START task, for use with PPI.
     ///
     /// When triggered, this task starts the timer.
-    pub fn task_start(&self) -> Task {
-        Task::from_reg(&T::regs().tasks_start)
+    pub fn task_start(&self) -> Task<'d> {
+        Task::from_reg(self.r.tasks_start())
     }
 
     /// Returns the STOP task, for use with PPI.
     ///
     /// When triggered, this task stops the timer.
-    pub fn task_stop(&self) -> Task {
-        Task::from_reg(&T::regs().tasks_stop)
+    pub fn task_stop(&self) -> Task<'d> {
+        Task::from_reg(self.r.tasks_stop())
     }
 
     /// Returns the CLEAR task, for use with PPI.
     ///
     /// When triggered, this task resets the timer's counter to 0.
-    pub fn task_clear(&self) -> Task {
-        Task::from_reg(&T::regs().tasks_clear)
+    pub fn task_clear(&self) -> Task<'d> {
+        Task::from_reg(self.r.tasks_clear())
+    }
+
+    /// Returns the COUNT task, for use with PPI.
+    ///
+    /// When triggered, this task increments the timer's counter by 1.
+    /// Only works in counter mode.
+    pub fn task_count(&self) -> Task<'d> {
+        Task::from_reg(self.r.tasks_count())
     }
 
     /// Change the timer's frequency.
@@ -206,39 +209,41 @@ impl<'d, T: Instance, I: TimerType> Timer<'d, T, I> {
     pub fn set_frequency(&self, frequency: Frequency) {
         self.stop();
 
-        T::regs()
-            .prescaler
+        self.r
+            .prescaler()
             // SAFETY: `frequency` is a variant of `Frequency`,
             // whose values are all in the range of 0-9 (the valid range of `prescaler`).
-            .write(|w| unsafe { w.prescaler().bits(frequency as u8) })
-    }
-
-    fn on_interrupt(_: *mut ()) {
-        let regs = T::regs();
-        for n in 0..T::CCS {
-            if regs.events_compare[n].read().bits() != 0 {
-                // Clear the interrupt, otherwise the interrupt will be repeatedly raised as soon as the interrupt handler exits.
-                // We can't clear the event, because it's used to poll whether the future is done or still pending.
-                regs.intenclr
-                    .modify(|r, w| unsafe { w.bits(r.bits() | (1 << (16 + n))) });
-                T::waker(n).wake();
-            }
-        }
+            .write(|w| w.set_prescaler(frequency as u8))
     }
 
     /// Returns this timer's `n`th CC register.
     ///
     /// # Panics
     /// Panics if `n` >= the number of CC registers this timer has (4 for a normal timer, 6 for an extended timer).
-    pub fn cc(&mut self, n: usize) -> Cc<T, I> {
-        if n >= T::CCS {
-            panic!("Cannot get CC register {} of timer with {} CC registers.", n, T::CCS);
+    pub fn cc(&self, n: usize) -> Cc<'d> {
+        if n >= self.ccs {
+            panic!("Cannot get CC register {} of timer with {} CC registers.", n, self.ccs);
         }
         Cc {
             n,
-            _p: self._p.reborrow(),
-            _i: PhantomData,
+            r: self.r,
+            _p: PhantomData,
         }
+    }
+}
+
+impl Timer<'static> {
+    /// Persist the timer's configuration for the rest of the program's lifetime. This method
+    /// should be preferred over [`core::mem::forget()`] because the `'static` bound prevents
+    /// accidental reuse of the underlying peripheral.
+    pub fn persist(self) {
+        core::mem::forget(self);
+    }
+}
+
+impl<'d> Drop for Timer<'d> {
+    fn drop(&mut self) {
+        self.stop();
     }
 }
 
@@ -249,80 +254,49 @@ impl<'d, T: Instance, I: TimerType> Timer<'d, T, I> {
 ///
 /// The timer will fire the register's COMPARE event when its counter reaches the value stored in the register.
 /// When the register's CAPTURE task is triggered, the timer will store the current value of its counter in the register
-pub struct Cc<'d, T: Instance, I: TimerType = NotAwaitable> {
+pub struct Cc<'d> {
     n: usize,
-    _p: PeripheralRef<'d, T>,
-    _i: PhantomData<I>,
+    r: pac::timer::Timer,
+    _p: PhantomData<&'d ()>,
 }
 
-impl<'d, T: Instance> Cc<'d, T, Awaitable> {
-    /// Wait until the timer's counter reaches the value stored in this register.
-    ///
-    /// This requires a mutable reference so that this task's waker cannot be overwritten by a second call to `wait`.
-    pub async fn wait(&mut self) {
-        let regs = T::regs();
-
-        // Enable the interrupt for this CC's COMPARE event.
-        regs.intenset
-            .modify(|r, w| unsafe { w.bits(r.bits() | (1 << (16 + self.n))) });
-
-        // Disable the interrupt if the future is dropped.
-        let on_drop = OnDrop::new(|| {
-            regs.intenclr
-                .modify(|r, w| unsafe { w.bits(r.bits() | (1 << (16 + self.n))) });
-        });
-
-        poll_fn(|cx| {
-            T::waker(self.n).register(cx.waker());
-
-            if regs.events_compare[self.n].read().bits() != 0 {
-                // Reset the register for next time
-                regs.events_compare[self.n].reset();
-                Poll::Ready(())
-            } else {
-                Poll::Pending
-            }
-        })
-        .await;
-
-        // The interrupt was already disabled in the interrupt handler, so there's no need to disable it again.
-        on_drop.defuse();
-    }
-}
-impl<'d, T: Instance> Cc<'d, T, NotAwaitable> {}
-
-impl<'d, T: Instance, I: TimerType> Cc<'d, T, I> {
+impl<'d> Cc<'d> {
     /// Get the current value stored in the register.
     pub fn read(&self) -> u32 {
-        T::regs().cc[self.n].read().cc().bits()
+        self.r.cc(self.n).read()
     }
 
     /// Set the value stored in the register.
     ///
     /// `event_compare` will fire when the timer's counter reaches this value.
     pub fn write(&self, value: u32) {
-        // SAFETY: there are no invalid values for the CC register.
-        T::regs().cc[self.n].write(|w| unsafe { w.cc().bits(value) })
+        self.r.cc(self.n).write_value(value);
     }
 
     /// Capture the current value of the timer's counter in this register, and return it.
     pub fn capture(&self) -> u32 {
-        T::regs().tasks_capture[self.n].write(|w| unsafe { w.bits(1) });
+        self.r.tasks_capture(self.n).write_value(1);
         self.read()
     }
 
     /// Returns this CC register's CAPTURE task, for use with PPI.
     ///
     /// When triggered, this task will capture the current value of the timer's counter in this register.
-    pub fn task_capture(&self) -> Task {
-        Task::from_reg(&T::regs().tasks_capture)
+    pub fn task_capture(&self) -> Task<'d> {
+        Task::from_reg(self.r.tasks_capture(self.n))
     }
 
     /// Returns this CC register's COMPARE event, for use with PPI.
     ///
     /// This event will fire when the timer's counter reaches the value in this CC register.
-    pub fn event_compare(&self) -> Event {
-        Event::from_reg(&T::regs().events_compare[self.n])
+    pub fn event_compare(&self) -> Event<'d> {
+        Event::from_reg(self.r.events_compare(self.n))
+    }
+
+    /// Clear the COMPARE event for this CC register.
+    #[inline]
+    pub fn clear_events(&self) {
+        self.r.events_compare(self.n).write_value(0);
     }
 
     /// Enable the shortcut between this CC register's COMPARE event and the timer's CLEAR task.
@@ -331,16 +305,12 @@ impl<'d, T: Instance, I: TimerType> Cc<'d, T, I> {
     ///
     /// So, when the timer's counter reaches the value stored in this register, the timer's counter will be reset to 0.
     pub fn short_compare_clear(&self) {
-        T::regs()
-            .shorts
-            .modify(|r, w| unsafe { w.bits(r.bits() | (1 << self.n)) })
+        self.r.shorts().modify(|w| w.set_compare_clear(self.n, true))
     }
 
     /// Disable the shortcut between this CC register's COMPARE event and the timer's CLEAR task.
     pub fn unshort_compare_clear(&self) {
-        T::regs()
-            .shorts
-            .modify(|r, w| unsafe { w.bits(r.bits() & !(1 << self.n)) })
+        self.r.shorts().modify(|w| w.set_compare_clear(self.n, false))
     }
 
     /// Enable the shortcut between this CC register's COMPARE event and the timer's STOP task.
@@ -349,15 +319,11 @@ impl<'d, T: Instance, I: TimerType> Cc<'d, T, I> {
     ///
     /// So, when the timer's counter reaches the value stored in this register, the timer will stop counting up.
     pub fn short_compare_stop(&self) {
-        T::regs()
-            .shorts
-            .modify(|r, w| unsafe { w.bits(r.bits() | (1 << (8 + self.n))) })
+        self.r.shorts().modify(|w| w.set_compare_stop(self.n, true))
     }
 
     /// Disable the shortcut between this CC register's COMPARE event and the timer's STOP task.
     pub fn unshort_compare_stop(&self) {
-        T::regs()
-            .shorts
-            .modify(|r, w| unsafe { w.bits(r.bits() & !(1 << (8 + self.n))) })
+        self.r.shorts().modify(|w| w.set_compare_stop(self.n, false))
     }
 }

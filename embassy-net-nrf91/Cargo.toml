@@ -1,0 +1,46 @@
+[package]
+name = "embassy-net-nrf91"
+version = "0.2.0"
+edition = "2024"
+description = "embassy-net driver for Nordic nRF91-series cellular modems"
+keywords = ["embedded", "nrf91", "embassy-net", "cellular"]
+categories = ["embedded", "hardware-support", "no-std", "network-programming", "asynchronous"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/embassy-rs/embassy"
+documentation = "https://docs.embassy.dev/embassy-net-nrf91"
+publish = true
+
+[features]
+defmt = ["dep:defmt", "heapless/defmt", "embassy-time/defmt"]
+log = ["dep:log"]
+
+[dependencies]
+defmt = { version = "1.0.1", optional = true }
+log = { version = "0.4.14", optional = true }
+
+# nrf-pac = { version = "0.2.0", git = "https://github.com/embassy-rs/nrf-pac.git", rev = "074935b9b24ab302fe812f91725937f57cd082cf" }
+nrf-pac = "0.3.0"
+cortex-m = "0.7.7"
+
+embassy-time = { version = "0.5.1", path = "../embassy-time" }
+embassy-sync = { version = "0.8.0", path = "../embassy-sync" }
+embassy-futures = { version = "0.1.2", path = "../embassy-futures" }
+embassy-net-driver-channel = { version = "0.4.0", path = "../embassy-net-driver-channel" }
+
+heapless = "0.9"
+embedded-io = { version = "0.7.1" }
+at-commands = "0.5.4"
+
+[package.metadata.embassy]
+build = [
+    {target = "thumbv7em-none-eabi", features = ["defmt", "nrf-pac/nrf9160"]}
+]
+
+[package.metadata.embassy_docs]
+src_base = "https://github.com/embassy-rs/embassy/blob/embassy-net-nrf91-v$VERSION/embassy-net-nrf91/src/"
+src_base_git = "https://github.com/embassy-rs/embassy/blob/$COMMIT/embassy-net-nrf91/src/"
+target = "thumbv7em-none-eabi"
+features = ["defmt", "nrf-pac/nrf9160"]
+
+[package.metadata.docs.rs]
+features = ["defmt", "nrf-pac/nrf9160"]

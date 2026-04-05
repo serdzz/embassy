@@ -1,34 +1,35 @@
+use core::ops::Range;
+
+#[derive(Debug)]
 pub struct RingBuffer<const N: usize> {
-    buf: [u8; N],
     start: usize,
     end: usize,
-    empty: bool,
+    full: bool,
 }
 
 impl<const N: usize> RingBuffer<N> {
     pub const fn new() -> Self {
         Self {
-            buf: [0; N],
             start: 0,
             end: 0,
-            empty: true,
+            full: false,
         }
     }
 
-    pub fn push_buf(&mut self) -> &mut [u8] {
-        if self.start == self.end && !self.empty {
-            trace!("  ringbuf: push_buf empty");
-            return &mut self.buf[..0];
+    pub fn push_buf(&mut self) -> Range<usize> {
+        if self.is_full() {
+            trace!("  ringbuf: push_buf full");
+            return 0..0;
         }
 
         let n = if self.start <= self.end {
-            self.buf.len() - self.end
+            N - self.end
         } else {
             self.start - self.end
         };
 
         trace!("  ringbuf: push_buf {:?}..{:?}", self.end, self.end + n);
-        &mut self.buf[self.end..self.end + n]
+        self.end..self.end + n
     }
 
     pub fn push(&mut self, n: usize) {
@@ -38,23 +39,23 @@ impl<const N: usize> RingBuffer<N> {
         }
 
         self.end = self.wrap(self.end + n);
-        self.empty = false;
+        self.full = self.start == self.end;
     }
 
-    pub fn pop_buf(&mut self) -> &mut [u8] {
-        if self.empty {
+    pub fn pop_buf(&mut self) -> Range<usize> {
+        if self.is_empty() {
             trace!("  ringbuf: pop_buf empty");
-            return &mut self.buf[..0];
+            return 0..0;
         }
 
         let n = if self.end <= self.start {
-            self.buf.len() - self.start
+            N - self.start
         } else {
             self.end - self.start
         };
 
         trace!("  ringbuf: pop_buf {:?}..{:?}", self.start, self.start + n);
-        &mut self.buf[self.start..self.start + n]
+        self.start..self.start + n
     }
 
     pub fn pop(&mut self, n: usize) {
@@ -64,20 +65,20 @@ impl<const N: usize> RingBuffer<N> {
         }
 
         self.start = self.wrap(self.start + n);
-        self.empty = self.start == self.end;
+        self.full = false;
     }
 
     pub fn is_full(&self) -> bool {
-        self.start == self.end && !self.empty
+        self.full
     }
 
     pub fn is_empty(&self) -> bool {
-        self.empty
+        self.start == self.end && !self.full
     }
 
     #[allow(unused)]
     pub fn len(&self) -> usize {
-        if self.empty {
+        if self.is_empty() {
             0
         } else if self.start < self.end {
             self.end - self.start
@@ -89,16 +90,12 @@ impl<const N: usize> RingBuffer<N> {
     pub fn clear(&mut self) {
         self.start = 0;
         self.end = 0;
-        self.empty = true;
+        self.full = false;
     }
 
     fn wrap(&self, n: usize) -> usize {
-        assert!(n <= self.buf.len());
-        if n == self.buf.len() {
-            0
-        } else {
-            n
-        }
+        assert!(n <= N);
+        if n == N { 0 } else { n }
     }
 }
 
@@ -110,37 +107,29 @@ mod tests {
     fn push_pop() {
         let mut rb: RingBuffer<4> = RingBuffer::new();
         let buf = rb.push_buf();
-        assert_eq!(4, buf.len());
-        buf[0] = 1;
-        buf[1] = 2;
-        buf[2] = 3;
-        buf[3] = 4;
+        assert_eq!(0..4, buf);
         rb.push(4);
 
         let buf = rb.pop_buf();
-        assert_eq!(4, buf.len());
-        assert_eq!(1, buf[0]);
+        assert_eq!(0..4, buf);
         rb.pop(1);
 
         let buf = rb.pop_buf();
-        assert_eq!(3, buf.len());
-        assert_eq!(2, buf[0]);
+        assert_eq!(1..4, buf);
         rb.pop(1);
 
         let buf = rb.pop_buf();
-        assert_eq!(2, buf.len());
-        assert_eq!(3, buf[0]);
+        assert_eq!(2..4, buf);
         rb.pop(1);
 
         let buf = rb.pop_buf();
-        assert_eq!(1, buf.len());
-        assert_eq!(4, buf[0]);
+        assert_eq!(3..4, buf);
         rb.pop(1);
 
         let buf = rb.pop_buf();
-        assert_eq!(0, buf.len());
+        assert_eq!(0..0, buf);
 
         let buf = rb.push_buf();
-        assert_eq!(4, buf.len());
+        assert_eq!(0..4, buf);
     }
 }

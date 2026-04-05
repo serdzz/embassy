@@ -1,27 +1,91 @@
 #![no_std]
 #![no_main]
-#![feature(type_alias_impl_trait)]
 
 use defmt::*;
 use embassy_executor::Spawner;
 use embassy_stm32::sdmmc::Sdmmc;
-use embassy_stm32::time::mhz;
-use embassy_stm32::{interrupt, Config};
+use embassy_stm32::sdmmc::sd::{Card, CmdBlock, DataBlock, StorageDevice};
+use embassy_stm32::time::{Hertz, mhz};
+use embassy_stm32::{Config, bind_interrupts, dma, peripherals, sdmmc};
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::channel::Channel;
+use embassy_time::{Duration, Timer};
 use {defmt_rtt as _, panic_probe as _};
 
+/// This is a safeguard to not overwrite any data on the SD card.
+/// If you don't care about SD card contents, set this to `true` to test writes.
+const ALLOW_WRITES: bool = false;
+
+bind_interrupts!(struct Irqs {
+    SDIO => sdmmc::InterruptHandler<peripherals::SDIO>;
+    DMA2_STREAM3 => dma::InterruptHandler<peripherals::DMA2_CH3>;
+});
+
+pub enum StorageRequest {
+    WriteRequest(u32, &'static DataBlock),
+    ReadRequest,
+}
+
+pub async fn run_storage<'a>(mut sdmmc: Sdmmc<'a>, channel: &'static Channel<NoopRawMutex, StorageRequest, 3>) {
+    loop {
+        let storage = loop {
+            if let Ok(storage) = StorageDevice::new_sd_card(&mut sdmmc, &mut CmdBlock::new(), mhz(24)).await {
+                break storage;
+            }
+
+            // Wait 1/2 second to avoid saturating the core
+            Timer::after(Duration::from_millis(500)).await;
+        };
+
+        let _ = run_storage_inner(storage, channel).await;
+    }
+}
+
+pub async fn run_storage_inner<'a, 'b>(
+    mut storage: StorageDevice<'a, 'b, Card>,
+    channel: &'static Channel<NoopRawMutex, StorageRequest, 3>,
+) -> Result<(), ()> {
+    // Or, instead of receiving from a channel, you can read/write files here
+
+    loop {
+        match channel.receive().await {
+            StorageRequest::WriteRequest(block_idx, buffer) => {
+                storage.write_block(block_idx, buffer).await.map_err(|_| ())?;
+            }
+            StorageRequest::ReadRequest => {}
+        }
+    }
+}
+
 #[embassy_executor::main]
-async fn main(_spawner: Spawner) -> ! {
+async fn main(_spawner: Spawner) {
     let mut config = Config::default();
-    config.rcc.sys_ck = Some(mhz(48));
+    {
+        use embassy_stm32::rcc::*;
+        config.rcc.hse = Some(Hse {
+            freq: Hertz(8_000_000),
+            mode: HseMode::Bypass,
+        });
+        config.rcc.pll_src = PllSource::HSE;
+        config.rcc.pll = Some(Pll {
+            prediv: PllPreDiv::DIV4,
+            mul: PllMul::MUL168,
+            divp: Some(PllPDiv::DIV2), // 8mhz / 4 * 168 / 2 = 168Mhz.
+            divq: Some(PllQDiv::DIV7), // 8mhz / 4 * 168 / 7 = 48Mhz.
+            divr: None,
+        });
+        config.rcc.ahb_pre = AHBPrescaler::DIV1;
+        config.rcc.apb1_pre = APBPrescaler::DIV4;
+        config.rcc.apb2_pre = APBPrescaler::DIV2;
+        config.rcc.sys = Sysclk::PLL1_P;
+    }
     let p = embassy_stm32::init(config);
     info!("Hello World!");
 
-    let irq = interrupt::take!(SDIO);
-
     let mut sdmmc = Sdmmc::new_4bit(
         p.SDIO,
-        irq,
         p.DMA2_CH3,
+        Irqs,
         p.PC12,
         p.PD2,
         p.PC8,
@@ -31,14 +95,45 @@ async fn main(_spawner: Spawner) -> ! {
         Default::default(),
     );
 
-    // Should print 400kHz for initialization
-    info!("Configured clock: {}", sdmmc.clock().0);
+    let mut cmd_block = CmdBlock::new();
 
-    unwrap!(sdmmc.init_card(mhz(25)).await);
+    let mut storage = loop {
+        if let Ok(storage) = StorageDevice::new_sd_card(&mut sdmmc, &mut cmd_block, mhz(24)).await {
+            break storage;
+        }
+    };
 
-    let card = unwrap!(sdmmc.card());
+    let card = storage.card();
 
-    info!("Card: {:#?}", Debug2Format(card));
+    info!("Card: {:#?}", Debug2Format(&card));
 
-    loop {}
+    // Arbitrary block index
+    let block_idx = 16;
+
+    // SDMMC uses `DataBlock` instead of `&[u8]` to ensure 4 byte alignment required by the hardware.
+    let mut block = DataBlock::new();
+
+    storage.read_block(block_idx, &mut block).await.unwrap();
+    info!("Read: {=[u8]:X}...{=[u8]:X}", block[..8], block[512 - 8..]);
+
+    if !ALLOW_WRITES {
+        info!("Writing is disabled.");
+        loop {}
+    }
+
+    info!("Filling block with 0x55");
+    block.fill(0x55);
+    storage.write_block(block_idx, &block).await.unwrap();
+    info!("Write done");
+
+    storage.read_block(block_idx, &mut block).await.unwrap();
+    info!("Read: {=[u8]:X}...{=[u8]:X}", block[..8], block[512 - 8..]);
+
+    info!("Filling block with 0xAA");
+    block.fill(0xAA);
+    storage.write_block(block_idx, &block).await.unwrap();
+    info!("Write done");
+
+    storage.read_block(block_idx, &mut block).await.unwrap();
+    info!("Read: {=[u8]:X}...{=[u8]:X}", block[..8], block[512 - 8..]);
 }

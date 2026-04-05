@@ -1,32 +1,38 @@
 [package]
-edition = "2021"
+edition = "2024"
 name = "embassy-stm32l0-examples"
 version = "0.1.0"
-
-[features]
-default = ["nightly"]
-nightly = ["embassy-stm32/nightly", "embassy-lora", "lorawan-device", "lorawan", "embedded-io/async"]
+license = "MIT OR Apache-2.0"
+publish = false
 
 [dependencies]
-embassy-sync = { version = "0.1.0", path = "../../embassy-sync", features = ["defmt"] }
-embassy-executor = { version = "0.1.0", path = "../../embassy-executor", features = ["defmt", "integrated-timers"] }
-embassy-time = { version = "0.1.0", path = "../../embassy-time", features = ["defmt", "defmt-timestamp-uptime", "tick-hz-32_768"] }
-embassy-stm32 = { version = "0.1.0", path = "../../embassy-stm32", features = ["defmt", "stm32l072cz", "time-driver-any", "exti", "unstable-traits", "memory-x"]  }
-embassy-lora = { version = "0.1.0", path = "../../embassy-lora", features = ["sx127x", "time", "defmt"], optional = true}
+# Change stm32l072cz to your chip name, if necessary.
+embassy-stm32 = { version = "0.6.0", path = "../../embassy-stm32", features = ["defmt", "stm32l073rz", "unstable-pac", "time-driver-any", "exti", "memory-x", "low-power", "executor-thread"]  }
+embassy-sync = { version = "0.8.0", path = "../../embassy-sync", features = ["defmt"] }
+embassy-executor = { version = "0.10.0", path = "../../embassy-executor", features = ["defmt"] }
+embassy-time = { version = "0.5.1", path = "../../embassy-time", features = ["defmt", "defmt-timestamp-uptime", "tick-hz-32_768"] }
+embassy-usb = { version = "0.6.0", path = "../../embassy-usb", features = ["defmt"] }
+embassy-futures = { version = "0.1.2", path = "../../embassy-futures" }
 
-lorawan-device = { version = "0.8.0", default-features = false, features = ["async"], optional = true }
-lorawan = { version = "0.7.1", default-features = false, features = ["default-crypto"], optional = true }
+defmt = "1.0.1"
+defmt-rtt = "1.0.0"
 
-defmt = "0.3"
-defmt-rtt = "0.3"
+embedded-storage = "0.3.1"
+embedded-io = { version = "0.7.1" }
+embedded-io-async = { version = "0.7.0" }
 
-embedded-storage = "0.3.0"
-embedded-io = "0.3.0"
-
-cortex-m = { version = "0.7.6", features = ["critical-section-single-core"] }
+cortex-m = { version = "0.7.6", features = ["inline-asm", "critical-section-single-core"] }
 cortex-m-rt = "0.7.0"
-panic-probe = { version = "0.3", features = ["print-defmt"] }
-futures = { version = "0.3.17", default-features = false, features = ["async-await"] }
-heapless = { version = "0.7.5", default-features = false }
+panic-probe = { version = "1.0.0", features = ["print-defmt"] }
+heapless = { version = "0.9", default-features = false }
 embedded-hal = "0.2.6"
-static_cell = "1.0"
+static_cell = { version = "2" }
+portable-atomic = { version = "1.5", features = ["unsafe-assume-single-core"] }
+
+[profile.release]
+debug = 2
+
+[package.metadata.embassy]
+build = [
+  { target = "thumbv6m-none-eabi", artifact-dir = "out/examples/stm32l0" }
+]

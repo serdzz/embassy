@@ -1,72 +1,26 @@
+/// Peripheral Access Crate
 #[allow(unused_imports)]
 #[rustfmt::skip]
 pub mod pac {
-    // The nRF5340 has a secure and non-secure (NS) mode.
-    // To avoid cfg spam, we remove _ns or _s suffixes here.
+    pub use nrf_pac::*;
 
     #[doc(no_inline)]
-    pub use nrf5340_net_pac::{
-        interrupt,
-        Interrupt,
-        Peripherals,
-
-        aar_ns as aar,
-        acl_ns as acl,
-        appmutex_ns as appmutex,
-        ccm_ns as ccm,
-        clock_ns as clock,
-        cti_ns as cti,
-        ctrlap_ns as ctrlap,
-        dcnf_ns as dcnf,
-        dppic_ns as dppic,
-        ecb_ns as ecb,
-        egu0_ns as egu0,
-        ficr_ns as ficr,
-        gpiote_ns as gpiote,
-        ipc_ns as ipc,
-        nvmc_ns as nvmc,
-        p0_ns as p0,
-        power_ns as power,
-        radio_ns as radio,
-        reset_ns as reset,
-        rng_ns as rng,
-        rtc0_ns as rtc0,
-        spim0_ns as spim0,
-        spis0_ns as spis0,
-        swi0_ns as swi0,
-        temp_ns as temp,
-        timer0_ns as timer0,
-        twim0_ns as twim0,
-        twis0_ns as twis0,
-        uarte0_ns as uarte0,
-        uicr_ns as uicr,
-        vmc_ns as vmc,
-        vreqctrl_ns as vreqctrl,
-        wdt_ns as wdt,
-
+    pub use nrf_pac::{
         AAR_NS as AAR,
         ACL_NS as ACL,
         APPMUTEX_NS as APPMUTEX,
         APPMUTEX_S as APPMUTEX_S,
-        CBP as CBP,
         CCM_NS as CCM,
         CLOCK_NS as CLOCK,
-        CPUID as CPUID,
         CTI_NS as CTI,
         CTRLAP_NS as CTRLAP,
-        DCB as DCB,
         DCNF_NS as DCNF,
         DPPIC_NS as DPPIC,
-        DWT as DWT,
         ECB_NS as ECB,
         EGU0_NS as EGU0,
         FICR_NS as FICR,
-        FPB as FPB,
         GPIOTE_NS as GPIOTE,
         IPC_NS as IPC,
-        ITM as ITM,
-        MPU as MPU,
-        NVIC as NVIC,
         NVMC_NS as NVMC,
         P0_NS as P0,
         P1_NS as P1,
@@ -76,19 +30,16 @@ pub mod pac {
         RNG_NS as RNG,
         RTC0_NS as RTC0,
         RTC1_NS as RTC1,
-        SCB as SCB,
         SPIM0_NS as SPIM0,
         SPIS0_NS as SPIS0,
         SWI0_NS as SWI0,
         SWI1_NS as SWI1,
         SWI2_NS as SWI2,
         SWI3_NS as SWI3,
-        SYST as SYST,
         TEMP_NS as TEMP,
         TIMER0_NS as TIMER0,
         TIMER1_NS as TIMER1,
         TIMER2_NS as TIMER2,
-        TPIU as TPIU,
         TWIM0_NS as TWIM0,
         TWIS0_NS as TWIS0,
         UARTE0_NS as UARTE0,
@@ -97,29 +48,37 @@ pub mod pac {
         VREQCTRL_NS as VREQCTRL,
         WDT_NS as WDT,
     };
-    
 }
 
 /// The maximum buffer size that the EasyDMA can send/recv in one operation.
 pub const EASY_DMA_SIZE: usize = (1 << 16) - 1;
 pub const FORCE_COPY_BUFFER_SIZE: usize = 1024;
 
-embassy_hal_common::peripherals! {
+pub const FLASH_SIZE: usize = 256 * 1024;
+
+embassy_hal_internal::peripherals! {
     // RTC
     RTC0,
+    #[cfg(not(feature = "time-driver-rtc1"))]
     RTC1,
 
     // WDT
     WDT,
 
+    // NVMC
+    NVMC,
+
     // UARTE, TWI & SPI
-    UARTETWISPI0,
-    UARTETWISPI1,
-    UARTETWISPI2,
-    UARTETWISPI3,
+    SERIAL0,
+    SERIAL1,
+    SERIAL2,
+    SERIAL3,
 
     // SAADC
     SAADC,
+
+    // RNG
+    RNG,
 
     // PWM
     PWM0,
@@ -183,6 +142,9 @@ embassy_hal_common::peripherals! {
     PPI_GROUP4,
     PPI_GROUP5,
 
+    // IPC
+    IPC,
+
     // GPIO port 0
     P0_00,
     P0_01,
@@ -234,15 +196,34 @@ embassy_hal_common::peripherals! {
     P1_13,
     P1_14,
     P1_15,
+
+    // Radio
+    RADIO,
+
+    // EGU
+    EGU0,
+
+    // TEMP
+    TEMP,
 }
 
-impl_uarte!(UARTETWISPI0, UARTE0, SERIAL0);
-impl_spim!(UARTETWISPI0, SPIM0, SERIAL0);
-impl_twim!(UARTETWISPI0, TWIM0, SERIAL0);
+impl_ipc!(IPC, IPC, IPC);
+
+impl_uarte!(SERIAL0, UARTE0, SERIAL0);
+impl_spim!(SERIAL0, SPIM0, SERIAL0);
+impl_spis!(SERIAL0, SPIS0, SERIAL0);
+impl_twim!(SERIAL0, TWIM0, SERIAL0);
+impl_twis!(SERIAL0, TWIS0, SERIAL0);
 
 impl_timer!(TIMER0, TIMER0, TIMER0);
 impl_timer!(TIMER1, TIMER1, TIMER1);
 impl_timer!(TIMER2, TIMER2, TIMER2);
+
+impl_rtc!(RTC0, RTC0, RTC0);
+#[cfg(not(feature = "time-driver-rtc1"))]
+impl_rtc!(RTC1, RTC1, RTC1);
+
+impl_rng!(RNG, RNG, RNG);
 
 impl_pin!(P0_00, 0, 0);
 impl_pin!(P0_01, 0, 1);
@@ -294,62 +275,71 @@ impl_pin!(P1_13, 1, 13);
 impl_pin!(P1_14, 1, 14);
 impl_pin!(P1_15, 1, 15);
 
-impl_ppi_channel!(PPI_CH0, 0 => configurable);
-impl_ppi_channel!(PPI_CH1, 1 => configurable);
-impl_ppi_channel!(PPI_CH2, 2 => configurable);
-impl_ppi_channel!(PPI_CH3, 3 => configurable);
-impl_ppi_channel!(PPI_CH4, 4 => configurable);
-impl_ppi_channel!(PPI_CH5, 5 => configurable);
-impl_ppi_channel!(PPI_CH6, 6 => configurable);
-impl_ppi_channel!(PPI_CH7, 7 => configurable);
-impl_ppi_channel!(PPI_CH8, 8 => configurable);
-impl_ppi_channel!(PPI_CH9, 9 => configurable);
-impl_ppi_channel!(PPI_CH10, 10 => configurable);
-impl_ppi_channel!(PPI_CH11, 11 => configurable);
-impl_ppi_channel!(PPI_CH12, 12 => configurable);
-impl_ppi_channel!(PPI_CH13, 13 => configurable);
-impl_ppi_channel!(PPI_CH14, 14 => configurable);
-impl_ppi_channel!(PPI_CH15, 15 => configurable);
-impl_ppi_channel!(PPI_CH16, 16 => configurable);
-impl_ppi_channel!(PPI_CH17, 17 => configurable);
-impl_ppi_channel!(PPI_CH18, 18 => configurable);
-impl_ppi_channel!(PPI_CH19, 19 => configurable);
-impl_ppi_channel!(PPI_CH20, 20 => configurable);
-impl_ppi_channel!(PPI_CH21, 21 => configurable);
-impl_ppi_channel!(PPI_CH22, 22 => configurable);
-impl_ppi_channel!(PPI_CH23, 23 => configurable);
-impl_ppi_channel!(PPI_CH24, 24 => configurable);
-impl_ppi_channel!(PPI_CH25, 25 => configurable);
-impl_ppi_channel!(PPI_CH26, 26 => configurable);
-impl_ppi_channel!(PPI_CH27, 27 => configurable);
-impl_ppi_channel!(PPI_CH28, 28 => configurable);
-impl_ppi_channel!(PPI_CH29, 29 => configurable);
-impl_ppi_channel!(PPI_CH30, 30 => configurable);
-impl_ppi_channel!(PPI_CH31, 31 => configurable);
+impl_ppi_channel!(PPI_CH0, DPPIC, 0 => configurable);
+impl_ppi_channel!(PPI_CH1, DPPIC, 1 => configurable);
+impl_ppi_channel!(PPI_CH2, DPPIC, 2 => configurable);
+impl_ppi_channel!(PPI_CH3, DPPIC, 3 => configurable);
+impl_ppi_channel!(PPI_CH4, DPPIC, 4 => configurable);
+impl_ppi_channel!(PPI_CH5, DPPIC, 5 => configurable);
+impl_ppi_channel!(PPI_CH6, DPPIC, 6 => configurable);
+impl_ppi_channel!(PPI_CH7, DPPIC, 7 => configurable);
+impl_ppi_channel!(PPI_CH8, DPPIC, 8 => configurable);
+impl_ppi_channel!(PPI_CH9, DPPIC, 9 => configurable);
+impl_ppi_channel!(PPI_CH10, DPPIC, 10 => configurable);
+impl_ppi_channel!(PPI_CH11, DPPIC, 11 => configurable);
+impl_ppi_channel!(PPI_CH12, DPPIC, 12 => configurable);
+impl_ppi_channel!(PPI_CH13, DPPIC, 13 => configurable);
+impl_ppi_channel!(PPI_CH14, DPPIC, 14 => configurable);
+impl_ppi_channel!(PPI_CH15, DPPIC, 15 => configurable);
+impl_ppi_channel!(PPI_CH16, DPPIC, 16 => configurable);
+impl_ppi_channel!(PPI_CH17, DPPIC, 17 => configurable);
+impl_ppi_channel!(PPI_CH18, DPPIC, 18 => configurable);
+impl_ppi_channel!(PPI_CH19, DPPIC, 19 => configurable);
+impl_ppi_channel!(PPI_CH20, DPPIC, 20 => configurable);
+impl_ppi_channel!(PPI_CH21, DPPIC, 21 => configurable);
+impl_ppi_channel!(PPI_CH22, DPPIC, 22 => configurable);
+impl_ppi_channel!(PPI_CH23, DPPIC, 23 => configurable);
+impl_ppi_channel!(PPI_CH24, DPPIC, 24 => configurable);
+impl_ppi_channel!(PPI_CH25, DPPIC, 25 => configurable);
+impl_ppi_channel!(PPI_CH26, DPPIC, 26 => configurable);
+impl_ppi_channel!(PPI_CH27, DPPIC, 27 => configurable);
+impl_ppi_channel!(PPI_CH28, DPPIC, 28 => configurable);
+impl_ppi_channel!(PPI_CH29, DPPIC, 29 => configurable);
+impl_ppi_channel!(PPI_CH30, DPPIC, 30 => configurable);
+impl_ppi_channel!(PPI_CH31, DPPIC, 31 => configurable);
 
-pub mod irqs {
-    use embassy_cortex_m::interrupt::_export::declare;
+impl_ppi_group!(PPI_GROUP0, DPPIC, 0);
+impl_ppi_group!(PPI_GROUP1, DPPIC, 1);
+impl_ppi_group!(PPI_GROUP2, DPPIC, 2);
+impl_ppi_group!(PPI_GROUP3, DPPIC, 3);
+impl_ppi_group!(PPI_GROUP4, DPPIC, 4);
+impl_ppi_group!(PPI_GROUP5, DPPIC, 5);
 
-    use crate::pac::Interrupt as InterruptEnum;
+impl_radio!(RADIO, RADIO, RADIO);
 
-    declare!(CLOCK_POWER);
-    declare!(RADIO);
-    declare!(RNG);
-    declare!(GPIOTE);
-    declare!(WDT);
-    declare!(TIMER0);
-    declare!(ECB);
-    declare!(AAR_CCM);
-    declare!(TEMP);
-    declare!(RTC0);
-    declare!(IPC);
-    declare!(SERIAL0);
-    declare!(EGU0);
-    declare!(RTC1);
-    declare!(TIMER1);
-    declare!(TIMER2);
-    declare!(SWI0);
-    declare!(SWI1);
-    declare!(SWI2);
-    declare!(SWI3);
-}
+impl_egu!(EGU0, EGU0, EGU0);
+
+impl_wdt!(WDT, WDT, WDT, 0);
+
+embassy_hal_internal::interrupt_mod!(
+    CLOCK_POWER,
+    RADIO,
+    RNG,
+    GPIOTE,
+    WDT,
+    TIMER0,
+    ECB,
+    AAR_CCM,
+    TEMP,
+    RTC0,
+    IPC,
+    SERIAL0,
+    EGU0,
+    RTC1,
+    TIMER1,
+    TIMER2,
+    SWI0,
+    SWI1,
+    SWI2,
+    SWI3,
+);

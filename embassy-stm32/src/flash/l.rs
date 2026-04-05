@@ -1,8 +1,137 @@
-use core::convert::TryInto;
 use core::ptr::write_volatile;
+use core::sync::atomic::{Ordering, fence};
 
+#[cfg(flash_l4)]
+use cortex_m::interrupt;
+#[cfg(flash_l4)]
+use embassy_sync::waitqueue::AtomicWaker;
+#[cfg(flash_l4)]
+use pac::flash::regs::Sr;
+
+use super::{FlashSector, WRITE_SIZE};
 use crate::flash::Error;
 use crate::pac;
+
+#[cfg(flash_l4)]
+static WAKER: AtomicWaker = AtomicWaker::new();
+
+#[cfg(flash_l4)]
+pub(crate) unsafe fn on_interrupt() {
+    // Clear IRQ flags (EOP and error flags are write-1-to-clear)
+    pac::FLASH.sr().write(|w| {
+        w.set_eop(true);
+        w.set_operr(true);
+        w.set_progerr(true);
+        w.set_wrperr(true);
+        w.set_pgaerr(true);
+        w.set_sizerr(true);
+        w.set_pgserr(true);
+        w.set_miserr(true);
+        w.set_fasterr(true);
+        w.set_rderr(true);
+        w.set_optverr(true);
+    });
+
+    WAKER.wake();
+}
+
+#[cfg(flash_l4)]
+pub(crate) unsafe fn enable_write() {
+    assert_eq!(0, WRITE_SIZE % 4);
+    pac::FLASH.cr().write(|w| {
+        w.set_pg(true);
+        w.set_eopie(true);
+        w.set_errie(true);
+    });
+}
+
+#[cfg(flash_l4)]
+pub(crate) unsafe fn disable_write() {
+    pac::FLASH.cr().write(|w| {
+        w.set_pg(false);
+        w.set_eopie(false);
+        w.set_errie(false);
+    });
+}
+
+#[cfg(flash_l4)]
+unsafe fn write_start(start_address: u32, buf: &[u8; WRITE_SIZE]) {
+    let mut address = start_address;
+    for val in buf.chunks(4) {
+        write_volatile(address as *mut u32, u32::from_le_bytes(unwrap!(val.try_into())));
+        address += val.len() as u32;
+
+        // prevents parallelism errors
+        fence(Ordering::SeqCst);
+    }
+}
+
+#[cfg(flash_l4)]
+pub(crate) async unsafe fn write(start_address: u32, buf: &[u8; WRITE_SIZE]) -> Result<(), Error> {
+    write_start(start_address, buf);
+    wait_ready().await
+}
+
+#[cfg(flash_l4)]
+pub(crate) async unsafe fn erase_sector(sector: &FlashSector) -> Result<(), Error> {
+    interrupt::free(|_| {
+        pac::FLASH.cr().modify(|w| {
+            w.set_per(true);
+            w.set_pnb(sector.index_in_bank);
+            w.set_bker(sector.bank == crate::flash::FlashBank::Bank2);
+            w.set_eopie(true);
+            w.set_errie(true);
+            w.set_start(true);
+        });
+    });
+
+    let ret = wait_ready().await;
+
+    pac::FLASH.cr().modify(|w| {
+        w.set_per(false);
+        w.set_eopie(false);
+        w.set_errie(false);
+    });
+    clear_all_err();
+    ret
+}
+
+#[cfg(flash_l4)]
+pub(crate) async fn wait_ready() -> Result<(), Error> {
+    use core::future::poll_fn;
+    use core::task::Poll;
+
+    poll_fn(|cx| {
+        WAKER.register(cx.waker());
+
+        let sr = pac::FLASH.sr().read();
+        if !sr.bsy() {
+            Poll::Ready(get_result(sr))
+        } else {
+            Poll::Pending
+        }
+    })
+    .await
+}
+
+#[cfg(flash_l4)]
+fn get_result(sr: Sr) -> Result<(), Error> {
+    if sr.progerr() {
+        Err(Error::Prog)
+    } else if sr.wrperr() {
+        Err(Error::Protected)
+    } else if sr.pgaerr() {
+        Err(Error::Unaligned)
+    } else if sr.sizerr() {
+        Err(Error::Size)
+    } else if sr.miserr() {
+        Err(Error::Miss)
+    } else if sr.pgserr() {
+        Err(Error::Seq)
+    } else {
+        Ok(())
+    }
+}
 
 pub(crate) unsafe fn lock() {
     #[cfg(any(flash_wl, flash_wb, flash_l4))]
@@ -14,174 +143,252 @@ pub(crate) unsafe fn lock() {
         w.set_prglock(true);
         w.set_pelock(true);
     });
+
+    #[cfg(any(flash_l5))]
+    pac::FLASH.nscr().modify(|w| w.set_nslock(true));
 }
 
 pub(crate) unsafe fn unlock() {
     #[cfg(any(flash_wl, flash_wb, flash_l4))]
     {
-        pac::FLASH.keyr().write(|w| w.set_keyr(0x4567_0123));
-        pac::FLASH.keyr().write(|w| w.set_keyr(0xCDEF_89AB));
+        if pac::FLASH.cr().read().lock() {
+            pac::FLASH.keyr().write_value(0x4567_0123);
+            pac::FLASH.keyr().write_value(0xCDEF_89AB);
+        }
     }
 
     #[cfg(any(flash_l0, flash_l1))]
     {
-        pac::FLASH.pekeyr().write(|w| w.set_pekeyr(0x89ABCDEF));
-        pac::FLASH.pekeyr().write(|w| w.set_pekeyr(0x02030405));
+        if pac::FLASH.pecr().read().pelock() {
+            pac::FLASH.pekeyr().write_value(0x89AB_CDEF);
+            pac::FLASH.pekeyr().write_value(0x0203_0405);
+        }
 
-        pac::FLASH.prgkeyr().write(|w| w.set_prgkeyr(0x8C9DAEBF));
-        pac::FLASH.prgkeyr().write(|w| w.set_prgkeyr(0x13141516));
+        if pac::FLASH.pecr().read().prglock() {
+            pac::FLASH.prgkeyr().write_value(0x8C9D_AEBF);
+            pac::FLASH.prgkeyr().write_value(0x1314_1516);
+        }
+    }
+
+    #[cfg(any(flash_l5))]
+    {
+        if pac::FLASH.nscr().read().nslock() {
+            pac::FLASH.nskeyr().write_value(0x4567_0123);
+            pac::FLASH.nskeyr().write_value(0xCDEF_89AB);
+        }
     }
 }
 
-pub(crate) unsafe fn blocking_write(offset: u32, buf: &[u8]) -> Result<(), Error> {
+pub(crate) unsafe fn enable_blocking_write() {
+    assert_eq!(0, WRITE_SIZE % 4);
+
     #[cfg(any(flash_wl, flash_wb, flash_l4))]
     pac::FLASH.cr().write(|w| w.set_pg(true));
 
-    let ret = {
-        let mut ret: Result<(), Error> = Ok(());
-        let mut offset = offset;
-        for chunk in buf.chunks(super::WRITE_SIZE) {
-            for val in chunk.chunks(4) {
-                write_volatile(offset as *mut u32, u32::from_le_bytes(val[0..4].try_into().unwrap()));
-                offset += val.len() as u32;
-            }
+    #[cfg(any(flash_l5))]
+    pac::FLASH.nscr().write(|w| w.set_nspg(true));
+}
 
-            ret = blocking_wait_ready();
-            if ret.is_err() {
-                break;
-            }
-        }
-        ret
-    };
-
+pub(crate) unsafe fn disable_blocking_write() {
     #[cfg(any(flash_wl, flash_wb, flash_l4))]
     pac::FLASH.cr().write(|w| w.set_pg(false));
 
+    #[cfg(any(flash_l5))]
+    pac::FLASH.nscr().write(|w| w.set_nspg(false));
+}
+
+pub(crate) unsafe fn blocking_write(start_address: u32, buf: &[u8; WRITE_SIZE]) -> Result<(), Error> {
+    let mut address = start_address;
+    for val in buf.chunks(4) {
+        write_volatile(address as *mut u32, u32::from_le_bytes(unwrap!(val.try_into())));
+        address += val.len() as u32;
+
+        // prevents parallelism errors
+        fence(Ordering::SeqCst);
+    }
+
+    wait_ready_blocking()
+}
+
+pub(crate) unsafe fn blocking_erase_sector(sector: &FlashSector) -> Result<(), Error> {
+    #[cfg(any(flash_l0, flash_l1))]
+    {
+        pac::FLASH.pecr().modify(|w| {
+            w.set_erase(true);
+            w.set_prog(true);
+        });
+
+        write_volatile(sector.start as *mut u32, 0xFFFFFFFF);
+    }
+
+    #[cfg(any(flash_wl, flash_wb, flash_l4, flash_l5))]
+    {
+        let idx = (sector.start - super::FLASH_BASE as u32) / super::BANK1_REGION.erase_size as u32;
+        #[cfg(any(flash_l4, flash_l5))]
+        let pgn = super::BANK1_REGION.size as u32 / super::BANK1_REGION.erase_size as u32;
+
+        #[cfg(flash_l4)]
+        let (idx, bank) = if idx > (pgn - 1) {
+            (idx - pgn, true)
+        } else {
+            (idx, false)
+        };
+
+        #[cfg(flash_l5)]
+        let (idx, bank) = if pac::FLASH.optr().read().dbank() {
+            if idx > (pgn - 1) {
+                (idx - pgn, Some(true))
+            } else {
+                (idx, Some(false))
+            }
+        } else {
+            (idx, None)
+        };
+
+        #[cfg(not(flash_l5))]
+        pac::FLASH.cr().modify(|w| {
+            w.set_per(true);
+            w.set_pnb(idx as u8);
+            #[cfg(any(flash_wl, flash_wb))]
+            w.set_strt(true);
+            #[cfg(any(flash_l4))]
+            w.set_start(true);
+            #[cfg(any(flash_l4))]
+            w.set_bker(bank);
+        });
+
+        #[cfg(flash_l5)]
+        pac::FLASH.nscr().modify(|w| {
+            w.set_nsper(true);
+            w.set_nspnb(idx as u8);
+            if let Some(bank) = bank {
+                w.set_nsbker(bank);
+            }
+            w.set_nsstrt(true);
+        });
+    }
+
+    let ret: Result<(), Error> = wait_ready_blocking();
+
+    #[cfg(any(flash_wl, flash_wb, flash_l4))]
+    pac::FLASH.cr().modify(|w| w.set_per(false));
+
+    #[cfg(any(flash_l5))]
+    pac::FLASH.nscr().modify(|w| w.set_nsper(false));
+
+    #[cfg(any(flash_l0, flash_l1))]
+    pac::FLASH.pecr().modify(|w| {
+        w.set_erase(false);
+        w.set_prog(false);
+    });
+
+    clear_all_err();
     ret
 }
 
-pub(crate) unsafe fn blocking_erase(from: u32, to: u32) -> Result<(), Error> {
-    for page in (from..to).step_by(super::ERASE_SIZE) {
-        #[cfg(any(flash_l0, flash_l1))]
-        {
-            pac::FLASH.pecr().modify(|w| {
-                w.set_erase(true);
-                w.set_prog(true);
-            });
+pub(crate) unsafe fn clear_all_err() {
+    // read and write back the same value.
+    // This clears all "write 1 to clear" bits.
+    #[cfg(not(flash_l5))]
+    pac::FLASH.sr().modify(|_| {});
 
-            write_volatile(page as *mut u32, 0xFFFFFFFF);
+    #[cfg(flash_l5)]
+    pac::FLASH.nssr().modify(|_| {});
+}
+
+pub(crate) unsafe fn wait_ready_blocking() -> Result<(), Error> {
+    loop {
+        #[cfg(not(flash_l5))]
+        {
+            let sr = pac::FLASH.sr().read();
+
+            if !sr.bsy() {
+                #[cfg(any(flash_wl, flash_wb, flash_l4))]
+                if sr.progerr() {
+                    return Err(Error::Prog);
+                }
+
+                if sr.wrperr() {
+                    return Err(Error::Protected);
+                }
+
+                if sr.pgaerr() {
+                    return Err(Error::Unaligned);
+                }
+
+                if sr.sizerr() {
+                    return Err(Error::Size);
+                }
+
+                #[cfg(any(flash_wl, flash_wb, flash_l4))]
+                if sr.miserr() {
+                    return Err(Error::Miss);
+                }
+
+                #[cfg(any(flash_wl, flash_wb, flash_l4))]
+                if sr.pgserr() {
+                    return Err(Error::Seq);
+                }
+
+                return Ok(());
+            }
         }
 
-        #[cfg(any(flash_wl, flash_wb, flash_l4))]
+        #[cfg(flash_l5)]
         {
-            let idx = (page - super::FLASH_BASE as u32) / super::ERASE_SIZE as u32;
+            let nssr = pac::FLASH.nssr().read();
 
-            #[cfg(flash_l4)]
-            let (idx, bank) = if idx > 255 { (idx - 256, true) } else { (idx, false) };
+            if !nssr.nsbsy() {
+                if nssr.nsprogerr() {
+                    return Err(Error::Prog);
+                }
 
-            pac::FLASH.cr().modify(|w| {
-                w.set_per(true);
-                w.set_pnb(idx as u8);
-                #[cfg(any(flash_wl, flash_wb))]
-                w.set_strt(true);
-                #[cfg(any(flash_l4))]
-                w.set_start(true);
-                #[cfg(any(flash_l4))]
-                w.set_bker(bank);
-            });
-        }
+                if nssr.nswrperr() {
+                    return Err(Error::Protected);
+                }
 
-        let ret: Result<(), Error> = blocking_wait_ready();
+                if nssr.nspgaerr() {
+                    return Err(Error::Unaligned);
+                }
 
-        #[cfg(any(flash_wl, flash_wb, flash_l4))]
-        pac::FLASH.cr().modify(|w| w.set_per(false));
+                if nssr.nssizerr() {
+                    return Err(Error::Size);
+                }
 
-        #[cfg(any(flash_l0, flash_l1))]
-        pac::FLASH.pecr().modify(|w| {
-            w.set_erase(false);
-            w.set_prog(false);
-        });
+                if nssr.nspgserr() {
+                    return Err(Error::Seq);
+                }
 
-        clear_all_err();
-        if ret.is_err() {
-            return ret;
+                return Ok(());
+            }
         }
     }
-
-    Ok(())
 }
 
-pub(crate) unsafe fn clear_all_err() {
-    pac::FLASH.sr().modify(|w| {
-        #[cfg(any(flash_wl, flash_wb, flash_l4, flash_l0))]
-        if w.rderr() {
-            w.set_rderr(true);
-        }
-        #[cfg(any(flash_wl, flash_wb, flash_l4))]
-        if w.fasterr() {
-            w.set_fasterr(true);
-        }
-        #[cfg(any(flash_wl, flash_wb, flash_l4))]
-        if w.miserr() {
-            w.set_miserr(true);
-        }
-        #[cfg(any(flash_wl, flash_wb, flash_l4))]
-        if w.pgserr() {
-            w.set_pgserr(true);
-        }
-        if w.sizerr() {
-            w.set_sizerr(true);
-        }
-        if w.pgaerr() {
-            w.set_pgaerr(true);
-        }
-        if w.wrperr() {
-            w.set_wrperr(true);
-        }
-        #[cfg(any(flash_wl, flash_wb, flash_l4))]
-        if w.progerr() {
-            w.set_progerr(true);
-        }
-        #[cfg(any(flash_wl, flash_wb, flash_l4))]
-        if w.operr() {
-            w.set_operr(true);
-        }
-    });
+#[cfg(all(bank_setup_configurable, flash_l5))]
+pub(crate) fn check_bank_setup() {
+    if cfg!(feature = "single-bank") && pac::FLASH.optr().read().dbank() {
+        panic!(
+            "Embassy is configured as single-bank, but the hardware is running in dual-bank mode. Change the hardware by changing the dbank value in the user option bytes or configure embassy to use dual-bank config"
+        );
+    }
+    if cfg!(feature = "dual-bank") && !pac::FLASH.optr().read().dbank() {
+        panic!(
+            "Embassy is configured as dual-bank, but the hardware is running in single-bank mode. Change the hardware by changing the dbank value in the user option bytes or configure embassy to use single-bank config"
+        );
+    }
 }
 
-pub(crate) unsafe fn blocking_wait_ready() -> Result<(), Error> {
-    loop {
-        let sr = pac::FLASH.sr().read();
-
-        if !sr.bsy() {
-            #[cfg(any(flash_wl, flash_wb, flash_l4))]
-            if sr.progerr() {
-                return Err(Error::Prog);
-            }
-
-            if sr.wrperr() {
-                return Err(Error::Protected);
-            }
-
-            if sr.pgaerr() {
-                return Err(Error::Unaligned);
-            }
-
-            if sr.sizerr() {
-                return Err(Error::Size);
-            }
-
-            #[cfg(any(flash_wl, flash_wb, flash_l4))]
-            if sr.miserr() {
-                return Err(Error::Miss);
-            }
-
-            #[cfg(any(flash_wl, flash_wb, flash_l4))]
-            if sr.pgserr() {
-                return Err(Error::Seq);
-            }
-
-            return Ok(());
-        }
+#[cfg(all(bank_setup_configurable, flash_l4))]
+pub(crate) fn check_bank_setup() {
+    if cfg!(feature = "single-bank") && pac::FLASH.optr().read().dualbank() {
+        panic!(
+            "Embassy is configured as single-bank, but the hardware is running in dual-bank mode. Change the hardware by changing the dualbank value in the user option bytes or configure embassy to use dual-bank config"
+        );
+    }
+    if cfg!(feature = "dual-bank") && !pac::FLASH.optr().read().dualbank() {
+        panic!(
+            "Embassy is configured as dual-bank, but the hardware is running in single-bank mode. Change the hardware by changing the dualbank value in the user option bytes or configure embassy to use single-bank config"
+        );
     }
 }

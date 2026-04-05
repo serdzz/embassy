@@ -1,7 +1,7 @@
 use core::fmt;
 use core::ops::{Add, AddAssign, Sub, SubAssign};
 
-use super::{driver, Duration, GCD_1K, GCD_1M, TICK_HZ};
+use super::{Duration, GCD_1G, GCD_1K, GCD_1M, TICK_HZ};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -17,13 +17,23 @@ impl Instant {
     pub const MAX: Instant = Instant { ticks: u64::MAX };
 
     /// Returns an Instant representing the current time.
+    #[inline]
     pub fn now() -> Instant {
-        Instant { ticks: driver::now() }
+        Instant {
+            ticks: embassy_time_driver::now(),
+        }
     }
 
     /// Create an Instant from a tick count since system boot.
     pub const fn from_ticks(ticks: u64) -> Self {
         Self { ticks }
+    }
+
+    /// Create an Instant from a nanosecond count since system boot.
+    pub const fn from_nanos(nanos: u64) -> Self {
+        Self {
+            ticks: nanos * (TICK_HZ / GCD_1G) / (1_000_000_000 / GCD_1G),
+        }
     }
 
     /// Create an Instant from a microsecond count since system boot.
@@ -47,6 +57,48 @@ impl Instant {
         }
     }
 
+    /// Try to create an Instant from a nanosecond count since system boot.
+    /// Fails if the number of nanoseconds is too large.
+    pub const fn try_from_nanos(nanos: u64) -> Option<Self> {
+        let Some(value) = nanos.checked_mul(TICK_HZ / GCD_1G) else {
+            return None;
+        };
+        Some(Self {
+            ticks: value / (1_000_000_000 / GCD_1G),
+        })
+    }
+
+    /// Try to create an Instant from a microsecond count since system boot.
+    /// Fails if the number of microseconds is too large.
+    pub const fn try_from_micros(micros: u64) -> Option<Self> {
+        let Some(value) = micros.checked_mul(TICK_HZ / GCD_1M) else {
+            return None;
+        };
+        Some(Self {
+            ticks: value / (1_000_000 / GCD_1M),
+        })
+    }
+
+    /// Try to create an Instant from a millisecond count since system boot.
+    /// Fails if the number of milliseconds is too large.
+    pub const fn try_from_millis(millis: u64) -> Option<Self> {
+        let Some(value) = millis.checked_mul(TICK_HZ / GCD_1K) else {
+            return None;
+        };
+        Some(Self {
+            ticks: value / (1000 / GCD_1K),
+        })
+    }
+
+    /// Try to create an Instant from a second count since system boot.
+    /// Fails if the number of seconds is too large.
+    pub const fn try_from_secs(seconds: u64) -> Option<Self> {
+        let Some(ticks) = seconds.checked_mul(TICK_HZ) else {
+            return None;
+        };
+        Some(Self { ticks })
+    }
+
     /// Tick count since system boot.
     pub const fn as_ticks(&self) -> u64 {
         self.ticks
@@ -67,11 +119,16 @@ impl Instant {
         self.ticks * (1_000_000 / GCD_1M) / (TICK_HZ / GCD_1M)
     }
 
+    /// Nanoseconds since system boot.
+    pub const fn as_nanos(&self) -> u64 {
+        self.ticks * (1_000_000_000 / GCD_1G) / (TICK_HZ / GCD_1G)
+    }
+
     /// Duration between this Instant and another Instant
     /// Panics on over/underflow.
     pub fn duration_since(&self, earlier: Instant) -> Duration {
         Duration {
-            ticks: self.ticks.checked_sub(earlier.ticks).unwrap(),
+            ticks: unwrap!(self.ticks.checked_sub(earlier.ticks)),
         }
     }
 
@@ -111,6 +168,18 @@ impl Instant {
     /// Subtracts one Duration to self, returning a new `Instant` or None in the event of an overflow.
     pub fn checked_sub(&self, duration: Duration) -> Option<Instant> {
         self.ticks.checked_sub(duration.ticks).map(|ticks| Instant { ticks })
+    }
+
+    /// Adds a Duration to self. In case of overflow, the maximum value is returned.
+    pub fn saturating_add(mut self, duration: Duration) -> Self {
+        self.ticks = self.ticks.saturating_add(duration.ticks);
+        self
+    }
+
+    /// Subtracts a Duration from self. In case of overflow, the minimum value is returned.
+    pub fn saturating_sub(mut self, duration: Duration) -> Self {
+        self.ticks = self.ticks.saturating_sub(duration.ticks);
+        self
     }
 }
 

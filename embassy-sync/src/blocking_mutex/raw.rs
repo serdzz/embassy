@@ -11,7 +11,7 @@ use core::marker::PhantomData;
 ///
 /// Note that, unlike other mutexes, implementations only guarantee no
 /// concurrent access from other threads: concurrent access from the current
-/// thread is allwed. For example, it's possible to lock the same mutex multiple times reentrantly.
+/// thread is allowed. For example, it's possible to lock the same mutex multiple times reentrantly.
 ///
 /// Therefore, locking a `RawMutex` is only enough to guarantee safe shared (`&`) access
 /// to the data, it is not enough to guarantee exclusive (`&mut`) access.
@@ -37,6 +37,7 @@ pub unsafe trait RawMutex {
 /// # Safety
 ///
 /// This mutex is safe to share between different executors and interrupts.
+#[derive(Debug)]
 pub struct CriticalSectionRawMutex {
     _phantom: PhantomData<()>,
 }
@@ -65,6 +66,7 @@ unsafe impl RawMutex for CriticalSectionRawMutex {
 /// # Safety
 ///
 /// **This Mutex is only safe within a single executor.**
+#[derive(Debug)]
 pub struct NoopRawMutex {
     _phantom: PhantomData<*mut ()>,
 }
@@ -87,7 +89,7 @@ unsafe impl RawMutex for NoopRawMutex {
 
 // ================
 
-#[cfg(any(cortex_m, feature = "std"))]
+#[cfg(any(cortex_m, doc, feature = "std"))]
 mod thread_mode {
     use super::*;
 
@@ -145,5 +147,5 @@ mod thread_mode {
         return unsafe { (0xE000ED04 as *const u32).read_volatile() } & 0x1FF == 0;
     }
 }
-#[cfg(any(cortex_m, feature = "std"))]
+#[cfg(any(cortex_m, doc, feature = "std"))]
 pub use thread_mode::*;

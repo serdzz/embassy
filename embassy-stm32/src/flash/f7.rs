@@ -1,78 +1,57 @@
-use core::convert::TryInto;
 use core::ptr::write_volatile;
+use core::sync::atomic::{Ordering, fence};
 
-use atomic_polyfill::{fence, Ordering};
-
+use super::{FlashSector, WRITE_SIZE};
 use crate::flash::Error;
 use crate::pac;
+
+impl FlashSector {
+    const fn snb(&self) -> u8 {
+        ((self.bank as u8) << 4) + self.index_in_bank
+    }
+}
 
 pub(crate) unsafe fn lock() {
     pac::FLASH.cr().modify(|w| w.set_lock(true));
 }
 
 pub(crate) unsafe fn unlock() {
-    pac::FLASH.keyr().write(|w| w.set_key(0x4567_0123));
-    pac::FLASH.keyr().write(|w| w.set_key(0xCDEF_89AB));
+    if pac::FLASH.cr().read().lock() {
+        pac::FLASH.keyr().write_value(0x4567_0123);
+        pac::FLASH.keyr().write_value(0xCDEF_89AB);
+    }
 }
 
-pub(crate) unsafe fn blocking_write(offset: u32, buf: &[u8]) -> Result<(), Error> {
+pub(crate) unsafe fn enable_blocking_write() {
+    assert_eq!(0, WRITE_SIZE % 4);
+
     pac::FLASH.cr().write(|w| {
         w.set_pg(true);
         w.set_psize(pac::flash::vals::Psize::PSIZE32);
     });
-
-    let ret = {
-        let mut ret: Result<(), Error> = Ok(());
-        let mut offset = offset;
-        for chunk in buf.chunks(super::WRITE_SIZE) {
-            for val in chunk.chunks(4) {
-                write_volatile(offset as *mut u32, u32::from_le_bytes(val[0..4].try_into().unwrap()));
-                offset += val.len() as u32;
-
-                // prevents parallelism errors
-                fence(Ordering::SeqCst);
-            }
-
-            ret = blocking_wait_ready();
-            if ret.is_err() {
-                break;
-            }
-        }
-        ret
-    };
-
-    pac::FLASH.cr().write(|w| w.set_pg(false));
-
-    ret
 }
 
-pub(crate) unsafe fn blocking_erase(from: u32, to: u32) -> Result<(), Error> {
-    let start_sector = if from >= (super::FLASH_BASE + super::ERASE_SIZE / 2) as u32 {
-        4 + (from - super::FLASH_BASE as u32) / super::ERASE_SIZE as u32
-    } else {
-        (from - super::FLASH_BASE as u32) / (super::ERASE_SIZE as u32 / 8)
-    };
+pub(crate) unsafe fn disable_blocking_write() {
+    pac::FLASH.cr().write(|w| w.set_pg(false));
+}
 
-    let end_sector = if to >= (super::FLASH_BASE + super::ERASE_SIZE / 2) as u32 {
-        4 + (to - super::FLASH_BASE as u32) / super::ERASE_SIZE as u32
-    } else {
-        (to - super::FLASH_BASE as u32) / (super::ERASE_SIZE as u32 / 8)
-    };
+pub(crate) unsafe fn blocking_write(start_address: u32, buf: &[u8; WRITE_SIZE]) -> Result<(), Error> {
+    let mut address = start_address;
+    for val in buf.chunks(4) {
+        write_volatile(address as *mut u32, u32::from_le_bytes(unwrap!(val.try_into())));
+        address += val.len() as u32;
 
-    for sector in start_sector..end_sector {
-        let ret = erase_sector(sector as u8);
-        if ret.is_err() {
-            return ret;
-        }
+        // prevents parallelism errors
+        fence(Ordering::SeqCst);
     }
 
-    Ok(())
+    blocking_wait_ready()
 }
 
-unsafe fn erase_sector(sector: u8) -> Result<(), Error> {
+pub(crate) unsafe fn blocking_erase_sector(sector: &FlashSector) -> Result<(), Error> {
     pac::FLASH.cr().modify(|w| {
         w.set_ser(true);
-        w.set_snb(sector)
+        w.set_snb(sector.snb())
     });
 
     pac::FLASH.cr().modify(|w| {
@@ -80,35 +59,18 @@ unsafe fn erase_sector(sector: u8) -> Result<(), Error> {
     });
 
     let ret: Result<(), Error> = blocking_wait_ready();
-
     pac::FLASH.cr().modify(|w| w.set_ser(false));
-
     clear_all_err();
-
     ret
 }
 
 pub(crate) unsafe fn clear_all_err() {
-    pac::FLASH.sr().modify(|w| {
-        if w.erserr() {
-            w.set_erserr(true);
-        }
-        if w.pgperr() {
-            w.set_pgperr(true);
-        }
-        if w.pgaerr() {
-            w.set_pgaerr(true);
-        }
-        if w.wrperr() {
-            w.set_wrperr(true);
-        }
-        if w.eop() {
-            w.set_eop(true);
-        }
-    });
+    // read and write back the same value.
+    // This clears all "write 1 to clear" bits.
+    pac::FLASH.sr().modify(|_| {});
 }
 
-pub(crate) unsafe fn blocking_wait_ready() -> Result<(), Error> {
+unsafe fn blocking_wait_ready() -> Result<(), Error> {
     loop {
         let sr = pac::FLASH.sr().read();
 
@@ -131,5 +93,91 @@ pub(crate) unsafe fn blocking_wait_ready() -> Result<(), Error> {
 
             return Ok(());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::flash::{FlashBank, get_sector};
+
+    #[test]
+    #[cfg(stm32f732)]
+    fn can_get_sector() {
+        const SMALL_SECTOR_SIZE: u32 = 16 * 1024;
+        const MEDIUM_SECTOR_SIZE: u32 = 64 * 1024;
+        const LARGE_SECTOR_SIZE: u32 = 128 * 1024;
+
+        let assert_sector = |index_in_bank: u8, start: u32, size: u32, address: u32| {
+            assert_eq!(
+                FlashSector {
+                    bank: FlashBank::Bank1,
+                    index_in_bank,
+                    start,
+                    size
+                },
+                unwrap!(get_sector(address, crate::flash::get_flash_regions()))
+            )
+        };
+
+        assert_sector(0, 0x0800_0000, SMALL_SECTOR_SIZE, 0x0800_0000);
+        assert_sector(0, 0x0800_0000, SMALL_SECTOR_SIZE, 0x0800_3FFF);
+        assert_sector(3, 0x0800_C000, SMALL_SECTOR_SIZE, 0x0800_C000);
+        assert_sector(3, 0x0800_C000, SMALL_SECTOR_SIZE, 0x0800_FFFF);
+
+        assert_sector(4, 0x0801_0000, MEDIUM_SECTOR_SIZE, 0x0801_0000);
+        assert_sector(4, 0x0801_0000, MEDIUM_SECTOR_SIZE, 0x0801_FFFF);
+
+        assert_sector(5, 0x0802_0000, LARGE_SECTOR_SIZE, 0x0802_0000);
+        assert_sector(5, 0x0802_0000, LARGE_SECTOR_SIZE, 0x0803_FFFF);
+        assert_sector(7, 0x0806_0000, LARGE_SECTOR_SIZE, 0x0806_0000);
+        assert_sector(7, 0x0806_0000, LARGE_SECTOR_SIZE, 0x0807_FFFF);
+    }
+
+    #[test]
+    #[cfg(all(stm32f769, feature = "single-bank"))]
+    fn can_get_sector() {
+        const SMALL_SECTOR_SIZE: u32 = 32 * 1024;
+        const MEDIUM_SECTOR_SIZE: u32 = 128 * 1024;
+        const LARGE_SECTOR_SIZE: u32 = 256 * 1024;
+
+        let assert_sector = |index_in_bank: u8, start: u32, size: u32, address: u32| {
+            assert_eq!(
+                FlashSector {
+                    bank: FlashBank::Bank1,
+                    index_in_bank,
+                    start,
+                    size
+                },
+                unwrap!(get_sector(address, crate::flash::get_flash_regions()))
+            )
+        };
+
+        assert_sector(0, 0x0800_0000, SMALL_SECTOR_SIZE, 0x0800_0000);
+        assert_sector(0, 0x0800_0000, SMALL_SECTOR_SIZE, 0x0800_7FFF);
+        assert_sector(3, 0x0801_8000, SMALL_SECTOR_SIZE, 0x0801_8000);
+        assert_sector(3, 0x0801_8000, SMALL_SECTOR_SIZE, 0x0801_FFFF);
+
+        assert_sector(4, 0x0802_0000, MEDIUM_SECTOR_SIZE, 0x0802_0000);
+        assert_sector(4, 0x0802_0000, MEDIUM_SECTOR_SIZE, 0x0803_FFFF);
+
+        assert_sector(5, 0x0804_0000, LARGE_SECTOR_SIZE, 0x0804_0000);
+        assert_sector(5, 0x0804_0000, LARGE_SECTOR_SIZE, 0x0807_FFFF);
+        assert_sector(7, 0x080C_0000, LARGE_SECTOR_SIZE, 0x080C_0000);
+        assert_sector(7, 0x080C_0000, LARGE_SECTOR_SIZE, 0x080F_FFFF);
+    }
+}
+
+#[cfg(all(bank_setup_configurable))]
+pub(crate) fn check_bank_setup() {
+    if cfg!(feature = "single-bank") && !pac::FLASH.optcr().read().n_dbank() {
+        panic!(
+            "Embassy is configured as single-bank, but the hardware is running in dual-bank mode. Change the hardware by changing the ndbank value in the user option bytes or configure embassy to use dual-bank config"
+        );
+    }
+    if cfg!(feature = "dual-bank") && pac::FLASH.optcr().read().n_dbank() {
+        panic!(
+            "Embassy is configured as dual-bank, but the hardware is running in single-bank mode. Change the hardware by changing the ndbank value in the user option bytes or configure embassy to use single-bank config"
+        );
     }
 }

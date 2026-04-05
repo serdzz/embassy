@@ -1,49 +1,90 @@
 #![no_std]
 #![no_main]
-#![feature(type_alias_impl_trait)]
+#[path = "../common.rs"]
+mod common;
 
-#[path = "../example_common.rs"]
-mod example_common;
+use common::*;
 use defmt::assert_eq;
 use embassy_executor::Spawner;
-use embassy_stm32::usart::{Config, Uart};
-use example_common::*;
+use embassy_futures::join::join;
+use embassy_stm32::usart::{Config, Error, Uart};
 
-#[embassy_executor::main]
+#[cfg_attr(
+    feature = "stop",
+    embassy_executor::main(executor = "embassy_stm32::executor::Executor", entry = "cortex_m_rt::entry")
+)]
+#[cfg_attr(not(feature = "stop"), embassy_executor::main)]
 async fn main(_spawner: Spawner) {
-    let p = embassy_stm32::init(config());
+    let p = init();
     info!("Hello World!");
 
     // Arduino pins D0 and D1
     // They're connected together with a 1K resistor.
-    #[cfg(feature = "stm32f103c8")]
-    let (tx, rx, usart, tx_dma, rx_dma) = (p.PA9, p.PA10, p.USART1, p.DMA1_CH4, p.DMA1_CH5);
-    #[cfg(feature = "stm32g491re")]
-    let (tx, rx, usart, tx_dma, rx_dma) = (p.PC4, p.PC5, p.USART1, p.DMA1_CH1, p.DMA1_CH2);
-    #[cfg(feature = "stm32g071rb")]
-    let (tx, rx, usart, tx_dma, rx_dma) = (p.PC4, p.PC5, p.USART1, p.DMA1_CH1, p.DMA1_CH2);
-    #[cfg(feature = "stm32f429zi")]
-    let (tx, rx, usart, tx_dma, rx_dma) = (p.PG14, p.PG9, p.USART6, p.DMA2_CH6, p.DMA2_CH1);
-    #[cfg(feature = "stm32wb55rg")]
-    let (tx, rx, usart, tx_dma, rx_dma) = (p.PA2, p.PA3, p.LPUART1, p.DMA1_CH1, p.DMA1_CH2);
-    #[cfg(feature = "stm32h755zi")]
-    let (tx, rx, usart, tx_dma, rx_dma) = (p.PB6, p.PB7, p.USART1, p.DMA1_CH0, p.DMA1_CH1);
-    #[cfg(feature = "stm32u585ai")]
-    let (tx, rx, usart, tx_dma, rx_dma) = (p.PD8, p.PD9, p.USART3, p.GPDMA1_CH0, p.GPDMA1_CH1);
+    let usart = peri!(p, UART);
+    let rx = peri!(p, UART_RX);
+    let tx = peri!(p, UART_TX);
+    let rx_dma = peri!(p, UART_RX_DMA);
+    let tx_dma = peri!(p, UART_TX_DMA);
+    let irq = irqs!(UART);
 
     let config = Config::default();
-    let mut usart = Uart::new(usart, rx, tx, tx_dma, rx_dma, config);
+    let usart = Uart::new(usart, rx, tx, tx_dma, rx_dma, irq, config).unwrap();
 
-    // We can't send too many bytes, they have to fit in the FIFO.
-    // This is because we aren't sending+receiving at the same time.
-    // For whatever reason, blocking works with 2 bytes but DMA only with 1??
+    const LEN: usize = 128;
+    let mut tx_buf = [0; LEN];
+    let mut rx_buf = [0; LEN];
 
-    let data = [0x42];
-    usart.write(&data).await.unwrap();
+    let (mut tx, mut rx) = usart.split();
 
-    let mut buf = [0; 1];
-    usart.read(&mut buf).await.unwrap();
-    assert_eq!(buf, data);
+    let mut noise_count = 0;
+    for n in 0..42 {
+        for i in 0..LEN {
+            tx_buf[i] = (i ^ n) as u8;
+        }
+
+        let tx_fut = async {
+            tx.write(&tx_buf).await.unwrap();
+        };
+
+        let mut is_noisy = false;
+        let rx_fut = async {
+            match rx.read(&mut rx_buf).await {
+                Ok(()) => {}
+                Err(Error::Noise) => is_noisy = true,
+                _ => defmt::panic!(),
+            }
+        };
+
+        // note: rx needs to be polled first, to workaround this bug:
+        // https://github.com/embassy-rs/embassy/issues/1426
+        join(rx_fut, tx_fut).await;
+
+        if is_noisy {
+            noise_count += 1;
+            continue;
+        }
+
+        assert_eq!(tx_buf, rx_buf);
+    }
+
+    defmt::assert!(noise_count < 3);
+
+    // Test flush doesn't hang. Check multiple combinations of async+blocking.
+    tx.write(&tx_buf).await.unwrap();
+    tx.flush().await.unwrap();
+    tx.flush().await.unwrap();
+
+    tx.write(&tx_buf).await.unwrap();
+    tx.blocking_flush().unwrap();
+    tx.flush().await.unwrap();
+
+    tx.blocking_write(&tx_buf).unwrap();
+    tx.blocking_flush().unwrap();
+    tx.flush().await.unwrap();
+
+    tx.blocking_write(&tx_buf).unwrap();
+    tx.flush().await.unwrap();
+    tx.blocking_flush().unwrap();
 
     info!("Test OK");
     cortex_m::asm::bkpt();

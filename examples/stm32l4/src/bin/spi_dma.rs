@@ -1,29 +1,28 @@
 #![no_std]
 #![no_main]
-#![feature(type_alias_impl_trait)]
 
 use defmt::*;
 use embassy_executor::Spawner;
 use embassy_stm32::gpio::{Input, Level, Output, Pull, Speed};
 use embassy_stm32::spi::{Config, Spi};
 use embassy_stm32::time::Hertz;
+use embassy_stm32::{bind_interrupts, dma, peripherals};
 use {defmt_rtt as _, panic_probe as _};
+
+bind_interrupts!(struct Irqs {
+    DMA1_CHANNEL1 => dma::InterruptHandler<peripherals::DMA1_CH1>;
+    DMA1_CHANNEL2 => dma::InterruptHandler<peripherals::DMA1_CH2>;
+});
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
     let p = embassy_stm32::init(Default::default());
     info!("Hello World!");
 
-    let mut spi = Spi::new(
-        p.SPI3,
-        p.PC10,
-        p.PC12,
-        p.PC11,
-        p.DMA1_CH1,
-        p.DMA1_CH2,
-        Hertz(1_000_000),
-        Config::default(),
-    );
+    let mut spi_config = Config::default();
+    spi_config.frequency = Hertz(1_000_000);
+
+    let mut spi = Spi::new(p.SPI3, p.PC10, p.PC12, p.PC11, p.DMA1_CH1, p.DMA1_CH2, Irqs, spi_config);
 
     // These are the pins for the Inventek eS-Wifi SPI Wifi Adapter.
 
@@ -41,8 +40,8 @@ async fn main(_spawner: Spawner) {
         info!("waiting for ready");
     }
 
-    let write = [0x0A; 10];
-    let mut read = [0; 10];
+    let write = [0x0Au8; 10];
+    let mut read = [0u8; 10];
     cs.set_low();
     spi.transfer(&mut read, &write).await.ok();
     cs.set_high();

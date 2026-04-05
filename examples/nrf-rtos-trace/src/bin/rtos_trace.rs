@@ -1,11 +1,11 @@
 #![no_std]
 #![no_main]
-#![feature(type_alias_impl_trait)]
 
+use core::future::poll_fn;
 use core::task::Poll;
 
 use embassy_executor::Spawner;
-use embassy_time::{Duration, Instant, Timer};
+use embassy_time::{Instant, Timer};
 #[cfg(feature = "log")]
 use log::*;
 use panic_probe as _;
@@ -33,7 +33,7 @@ async fn run1() {
         info!("DING DONG");
         #[cfg(not(feature = "log"))]
         rtos_trace::trace::marker(13);
-        Timer::after(Duration::from_ticks(16000)).await;
+        Timer::after_ticks(16000).await;
     }
 }
 
@@ -46,7 +46,7 @@ async fn run2() {
 
 #[embassy_executor::task]
 async fn run3() {
-    futures::future::poll_fn(|cx| {
+    poll_fn(|cx| {
         cx.waker().wake_by_ref();
         Poll::<()>::Pending
     })
@@ -63,7 +63,7 @@ async fn main(spawner: Spawner) {
         ::log::set_max_level(::log::LevelFilter::Trace);
     }
 
-    spawner.spawn(run1()).unwrap();
-    spawner.spawn(run2()).unwrap();
-    spawner.spawn(run3()).unwrap();
+    spawner.spawn(run1().unwrap());
+    spawner.spawn(run2().unwrap());
+    spawner.spawn(run3().unwrap());
 }

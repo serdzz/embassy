@@ -1,317 +1,166 @@
-#[cfg(bdma)]
-pub(crate) mod bdma;
-#[cfg(dma)]
-pub(crate) mod dma;
+//! Direct Memory Access (DMA)
+#![macro_use]
+
+#[cfg(any(bdma, dma, mdma))]
+mod dma_bdma;
+
+#[cfg(any(bdma, dma, mdma))]
+pub use dma_bdma::*;
+
+#[cfg(gpdma)]
+pub(crate) mod gpdma;
+#[cfg(gpdma)]
+pub use gpdma::ringbuffered::*;
+#[cfg(gpdma)]
+pub use gpdma::*;
+
 #[cfg(dmamux)]
 mod dmamux;
-#[cfg(gpdma)]
-mod gpdma;
-
-use core::future::Future;
-use core::mem;
-use core::pin::Pin;
-use core::task::{Context, Poll, Waker};
-
-use embassy_hal_common::{impl_peripheral, into_ref};
-
 #[cfg(dmamux)]
-pub use self::dmamux::*;
-use crate::Peripheral;
+pub(crate) use dmamux::*;
 
-#[cfg(feature = "unstable-pac")]
-pub mod low_level {
-    pub use super::transfers::*;
+mod util;
+pub(crate) use util::*;
+
+pub(crate) mod ringbuffer;
+pub mod word;
+
+use core::marker::PhantomData;
+
+use embassy_hal_internal::{Peri, PeripheralType};
+
+use crate::_generated::DmaChannel;
+use crate::interrupt;
+
+/// The direction of a DMA transfer.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum Dir {
+    /// Transfer from memory to a peripheral.
+    MemoryToPeripheral,
+    /// Transfer from a peripheral to memory.
+    PeripheralToMemory,
+    /// Transfer from memory to another memory address.
+    MemoryToMemory,
 }
 
-pub(crate) use transfers::*;
+/// Which pointer in the transfer to increment.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum Increment {
+    /// DMA will not increment either of the addresses.
+    None,
+    /// DMA will increment the peripheral address.
+    Peripheral,
+    /// DMA will increment the memory address.
+    Memory,
+    /// DMA will increment both peripheral and memory addresses simultaneously.
+    Both,
+}
 
-#[cfg(any(bdma_v2, dma_v2, dmamux, gpdma))]
+/// DMA request type alias. (also known as DMA channel number in some chips)
+#[cfg(any(dma_v2, bdma_v2, gpdma, dmamux))]
 pub type Request = u8;
-#[cfg(not(any(bdma_v2, dma_v2, dmamux, gpdma)))]
+/// DMA request type alias. (also known as DMA channel number in some chips)
+#[cfg(not(any(dma_v2, bdma_v2, gpdma, dmamux)))]
 pub type Request = ();
 
-pub(crate) mod sealed {
-    use super::*;
-
-    pub trait Word {}
-
-    pub trait Channel {
-        /// Starts this channel for writing a stream of words.
-        ///
-        /// Safety:
-        /// - `buf` must point to a valid buffer for DMA reading.
-        /// - `buf` must be alive for the entire duration of the DMA transfer.
-        /// - `reg_addr` must be a valid peripheral register address to write to.
-        unsafe fn start_write<W: super::Word>(
-            &mut self,
-            request: Request,
-            buf: *const [W],
-            reg_addr: *mut W,
-            options: TransferOptions,
-        );
-
-        /// Starts this channel for writing a word repeatedly.
-        ///
-        /// Safety:
-        /// - `reg_addr` must be a valid peripheral register address to write to.
-        unsafe fn start_write_repeated<W: super::Word>(
-            &mut self,
-            request: Request,
-            repeated: W,
-            count: usize,
-            reg_addr: *mut W,
-            options: TransferOptions,
-        );
-
-        /// Starts this channel for reading a stream of words.
-        ///
-        /// Safety:
-        /// - `buf` must point to a valid buffer for DMA writing.
-        /// - `buf` must be alive for the entire duration of the DMA transfer.
-        /// - `reg_addr` must be a valid peripheral register address to read from.
-        unsafe fn start_read<W: super::Word>(
-            &mut self,
-            request: Request,
-            reg_addr: *const W,
-            buf: *mut [W],
-            options: TransferOptions,
-        );
-
-        /// DMA double-buffered mode is unsafe as UB can happen when the hardware writes to a buffer currently owned by the software
-        /// more information can be found here: https://github.com/embassy-rs/embassy/issues/702
-        /// This feature is now used solely for the purposes of implementing giant DMA transfers required for DCMI
-        unsafe fn start_double_buffered_read<W: super::Word>(
-            &mut self,
-            request: Request,
-            reg_addr: *const W,
-            buffer0: *mut W,
-            buffer1: *mut W,
-            buffer_len: usize,
-            options: TransferOptions,
-        );
-
-        unsafe fn set_buffer0<W: super::Word>(&mut self, buffer: *mut W);
-
-        unsafe fn set_buffer1<W: super::Word>(&mut self, buffer: *mut W);
-
-        unsafe fn is_buffer0_accessible(&mut self) -> bool;
-
-        /// Requests the channel to stop.
-        /// NOTE: The channel does not immediately stop, you have to wait
-        /// for `is_running() = false`.
-        fn request_stop(&mut self);
-
-        /// Returns whether this channel is running or stopped.
-        ///
-        /// The channel stops running when it either completes or is manually stopped.
-        fn is_running(&self) -> bool;
-
-        /// Returns the total number of remaining transfers.
-        fn remaining_transfers(&mut self) -> u16;
-
-        /// Sets the waker that is called when this channel stops (either completed or manually stopped)
-        fn set_waker(&mut self, waker: &Waker);
-
-        /// This is called when this channel triggers an interrupt.
-        /// Note: Because some channels share an interrupt, this function might be
-        /// called for a channel that didn't trigger an interrupt.
-        fn on_irq();
-    }
+/// DMA channel driver
+pub struct Channel<'d> {
+    pub(crate) channel: DmaChannel,
+    phantom: PhantomData<&'d ()>,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum WordSize {
-    OneByte,
-    TwoBytes,
-    FourBytes,
-}
-
-impl WordSize {
-    pub fn bytes(&self) -> usize {
-        match self {
-            Self::OneByte => 1,
-            Self::TwoBytes => 2,
-            Self::FourBytes => 4,
-        }
-    }
-}
-
-pub trait Word: sealed::Word {
-    fn bits() -> WordSize;
-}
-
-impl sealed::Word for u8 {}
-impl Word for u8 {
-    fn bits() -> WordSize {
-        WordSize::OneByte
-    }
-}
-
-impl sealed::Word for u16 {}
-impl Word for u16 {
-    fn bits() -> WordSize {
-        WordSize::TwoBytes
-    }
-}
-
-impl sealed::Word for u32 {}
-impl Word for u32 {
-    fn bits() -> WordSize {
-        WordSize::FourBytes
-    }
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Burst {
-    /// Single transfer
-    Single,
-    /// Incremental burst of 4 beats
-    Incr4,
-    /// Incremental burst of 8 beats
-    Incr8,
-    /// Incremental burst of 16 beats
-    Incr16,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum FlowControl {
-    /// Flow control by DMA
-    Dma,
-    /// Flow control by peripheral
-    Peripheral,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct TransferOptions {
-    /// Peripheral burst transfer configuration
-    pub pburst: Burst,
-    /// Memory burst transfer configuration
-    pub mburst: Burst,
-    /// Flow control configuration
-    pub flow_ctrl: FlowControl,
-}
-
-impl Default for TransferOptions {
-    fn default() -> Self {
+impl<'d> Channel<'d> {
+    /// Create a new DMA channel driver.
+    pub fn new<T: ChannelInstance>(
+        _ch: Peri<'d, T>,
+        _irq: impl interrupt::typelevel::Binding<T::Interrupt, crate::dma::InterruptHandler<T>> + 'd,
+    ) -> Self {
         Self {
-            pburst: Burst::Single,
-            mburst: Burst::Single,
-            flow_ctrl: FlowControl::Dma,
+            channel: T::CHANNEL,
+            phantom: PhantomData,
+        }
+    }
+
+    /// Reborrow the channel, allowing it to be used in multiple places.
+    pub fn reborrow(&mut self) -> Channel<'_> {
+        Channel {
+            channel: self.channel,
+            phantom: PhantomData,
+        }
+    }
+
+    pub(crate) unsafe fn clone_unchecked(&self) -> Channel<'d> {
+        Channel {
+            channel: self.channel,
+            phantom: PhantomData,
         }
     }
 }
 
-mod transfers {
-    use embassy_hal_common::PeripheralRef;
+pub(crate) trait SealedChannelInstance {
+    const CHANNEL: DmaChannel;
+}
 
-    use super::*;
+/// DMA channel.
+#[allow(private_bounds)]
+pub trait ChannelInstance: SealedChannelInstance + PeripheralType + 'static {
+    /// The interrupt type for this DMA channel.
+    type Interrupt: interrupt::typelevel::Interrupt;
+}
 
-    #[allow(unused)]
-    pub fn read<'a, W: Word>(
-        channel: impl Peripheral<P = impl Channel> + 'a,
-        request: Request,
-        reg_addr: *mut W,
-        buf: &'a mut [W],
-    ) -> impl Future<Output = ()> + 'a {
-        assert!(buf.len() > 0 && buf.len() <= 0xFFFF);
-        into_ref!(channel);
+/// DMA interrupt handler.
+#[allow(private_bounds)]
+pub struct InterruptHandler<T: ChannelInstance> {
+    _phantom: PhantomData<T>,
+}
 
-        unsafe { channel.start_read::<W>(request, reg_addr, buf, Default::default()) };
-
-        Transfer::new(channel)
-    }
-
-    #[allow(unused)]
-    pub fn write<'a, W: Word>(
-        channel: impl Peripheral<P = impl Channel> + 'a,
-        request: Request,
-        buf: &'a [W],
-        reg_addr: *mut W,
-    ) -> impl Future<Output = ()> + 'a {
-        assert!(buf.len() > 0 && buf.len() <= 0xFFFF);
-        into_ref!(channel);
-
-        unsafe { channel.start_write::<W>(request, buf, reg_addr, Default::default()) };
-
-        Transfer::new(channel)
-    }
-
-    #[allow(unused)]
-    pub fn write_repeated<'a, W: Word>(
-        channel: impl Peripheral<P = impl Channel> + 'a,
-        request: Request,
-        repeated: W,
-        count: usize,
-        reg_addr: *mut W,
-    ) -> impl Future<Output = ()> + 'a {
-        into_ref!(channel);
-
-        unsafe { channel.start_write_repeated::<W>(request, repeated, count, reg_addr, Default::default()) };
-
-        Transfer::new(channel)
-    }
-
-    pub(crate) struct Transfer<'a, C: Channel> {
-        channel: PeripheralRef<'a, C>,
-    }
-
-    impl<'a, C: Channel> Transfer<'a, C> {
-        pub(crate) fn new(channel: impl Peripheral<P = C> + 'a) -> Self {
-            into_ref!(channel);
-            Self { channel }
-        }
-    }
-
-    impl<'a, C: Channel> Drop for Transfer<'a, C> {
-        fn drop(&mut self) {
-            self.channel.request_stop();
-            while self.channel.is_running() {}
-        }
-    }
-
-    impl<'a, C: Channel> Unpin for Transfer<'a, C> {}
-    impl<'a, C: Channel> Future for Transfer<'a, C> {
-        type Output = ();
-        fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-            self.channel.set_waker(cx.waker());
-            if self.channel.is_running() {
-                Poll::Pending
-            } else {
-                Poll::Ready(())
-            }
-        }
+impl<T: ChannelInstance> interrupt::typelevel::Handler<T::Interrupt> for InterruptHandler<T> {
+    unsafe fn on_interrupt() {
+        on_irq(T::CHANNEL)
     }
 }
 
-pub trait Channel: sealed::Channel + Peripheral<P = Self> + 'static {}
+macro_rules! dma_channel_impl {
+    ($channel_peri:ident, $irq:ty) => {
+        impl crate::dma::SealedChannelInstance for crate::peripherals::$channel_peri {
+            const CHANNEL: crate::_generated::DmaChannel = crate::_generated::DmaChannel::$channel_peri;
+        }
 
-pub struct NoDma;
+        impl crate::dma::ChannelInstance for crate::peripherals::$channel_peri {
+            type Interrupt = $irq;
+        }
+    };
+}
 
-impl_peripheral!(NoDma);
+const CHANNEL_COUNT: usize = crate::_generated::DMA_CHANNELS.len();
+static STATE: [ChannelState; CHANNEL_COUNT] = [ChannelState::NEW; CHANNEL_COUNT];
+
+pub(crate) fn info(channel: DmaChannel) -> &'static ChannelInfo {
+    &crate::_generated::DMA_CHANNELS[channel as usize]
+}
 
 // safety: must be called only once at startup
-pub(crate) unsafe fn init() {
-    #[cfg(bdma)]
-    bdma::init();
-    #[cfg(dma)]
-    dma::init();
-    #[cfg(dmamux)]
-    dmamux::init();
+pub(crate) unsafe fn init(
+    cs: critical_section::CriticalSection,
+    #[cfg(bdma)] bdma_priority: interrupt::Priority,
+    #[cfg(dma)] dma_priority: interrupt::Priority,
+    #[cfg(gpdma)] gpdma_priority: interrupt::Priority,
+    #[cfg(mdma)] mdma_priority: interrupt::Priority,
+) {
+    #[cfg(any(dma, bdma))]
+    dma_bdma::init(
+        cs,
+        #[cfg(dma)]
+        dma_priority,
+        #[cfg(bdma)]
+        bdma_priority,
+        #[cfg(mdma)]
+        mdma_priority,
+    );
     #[cfg(gpdma)]
-    gpdma::init();
-}
-
-// TODO: replace transmutes with core::ptr::metadata once it's stable
-#[allow(unused)]
-pub(crate) fn slice_ptr_parts<T>(slice: *const [T]) -> (usize, usize) {
-    unsafe { mem::transmute(slice) }
-}
-
-#[allow(unused)]
-pub(crate) fn slice_ptr_parts_mut<T>(slice: *mut [T]) -> (usize, usize) {
-    unsafe { mem::transmute(slice) }
+    gpdma::init(cs, gpdma_priority);
+    #[cfg(dmamux)]
+    dmamux::init(cs);
 }

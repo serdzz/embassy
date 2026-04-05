@@ -1,30 +1,45 @@
 #![no_std]
 #![no_main]
-#![feature(type_alias_impl_trait)]
 
 use defmt::{panic, *};
 use embassy_executor::Spawner;
-use embassy_stm32::rcc::*;
+use embassy_futures::join::join;
 use embassy_stm32::usb::{Driver, Instance};
-use embassy_stm32::{interrupt, Config};
-use embassy_usb::driver::EndpointError;
+use embassy_stm32::{Config, bind_interrupts, peripherals, usb};
 use embassy_usb::Builder;
-use embassy_usb_serial::{CdcAcmClass, State};
-use futures::future::join;
+use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
+use embassy_usb::driver::EndpointError;
 use {defmt_rtt as _, panic_probe as _};
+
+bind_interrupts!(struct Irqs {
+    USB_FS => usb::InterruptHandler<peripherals::USB>;
+});
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
     let mut config = Config::default();
-    config.rcc.mux = ClockSrc::PLL(PLLSource::HSI16, PLLClkDiv::Div2, PLLSrcDiv::Div1, PLLMul::Mul10, None);
-    config.rcc.hsi48 = true;
+    {
+        use embassy_stm32::rcc::*;
+        config.rcc.hsi = true;
+        config.rcc.sys = Sysclk::PLL1_R;
+        config.rcc.pll = Some(Pll {
+            // 80Mhz clock (16 / 1 * 10 / 2)
+            source: PllSource::HSI,
+            prediv: PllPreDiv::DIV1,
+            mul: PllMul::MUL10,
+            divp: None,
+            divq: None,
+            divr: Some(PllRDiv::DIV2),
+        });
+        config.rcc.hsi48 = Some(Hsi48Config { sync_from_usb: true }); // needed for USB
+        config.rcc.mux.clk48sel = mux::Clk48sel::HSI48;
+    }
     let p = embassy_stm32::init(config);
 
     info!("Hello World!");
 
     // Create the driver, from the HAL.
-    let irq = interrupt::take!(USB_FS);
-    let driver = Driver::new(p.USB, irq, p.PA12, p.PA11);
+    let driver = Driver::new(p.USB, Irqs, p.PA12, p.PA11);
 
     // Create embassy-usb Config
     let config = embassy_usb::Config::new(0xc0de, 0xcafe);
@@ -32,7 +47,6 @@ async fn main(_spawner: Spawner) {
 
     // Create embassy-usb DeviceBuilder using the driver and config.
     // It needs some buffers for building the descriptors.
-    let mut device_descriptor = [0; 256];
     let mut config_descriptor = [0; 256];
     let mut bos_descriptor = [0; 256];
     let mut control_buf = [0; 7];
@@ -42,11 +56,10 @@ async fn main(_spawner: Spawner) {
     let mut builder = Builder::new(
         driver,
         config,
-        &mut device_descriptor,
         &mut config_descriptor,
         &mut bos_descriptor,
+        &mut [], // no msos descriptors
         &mut control_buf,
-        None,
     );
 
     // Create classes on the builder.

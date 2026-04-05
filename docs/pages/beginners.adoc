@@ -1,0 +1,15 @@
+= For beginners
+
+The articles in this section are primarily aimed at users new to Embassy,
+showing how to get started, how to structure your project and other best practices.
+
+include::getting_started.adoc[leveloffset = 2]
+include::basic_application.adoc[leveloffset = 2]
+include::project_structure.adoc[leveloffset = 2]
+include::new_project.adoc[leveloffset = 2]
+include::best_practices.adoc[leveloffset = 2]
+include::layer_by_layer.adoc[leveloffset = 2]
+
+== What's next?
+
+Now that you're familiar with the basics, the xref:_system_description[System description] section covers the executor, HALs, bootloader, and other Embassy components in more detail.

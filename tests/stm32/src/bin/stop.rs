@@ -1,0 +1,80 @@
+// required-features: stop,chrono
+
+#![no_std]
+#![no_main]
+#[path = "../common.rs"]
+mod common;
+
+use chrono::NaiveDate;
+use common::*;
+use embassy_executor::Spawner;
+use embassy_stm32::Config;
+use embassy_stm32::rcc::{LsConfig, StopMode, get_stop_mode};
+use embassy_stm32::rtc::Rtc;
+use embassy_time::Timer;
+
+/// Get whether the core is ready to enter the given stop mode.
+///
+/// This will return false if some peripheral driver is in use that
+/// prevents entering the given stop mode.
+fn stop_ready(stop_mode: StopMode) -> bool {
+    critical_section::with(|cs| match get_stop_mode(cs) {
+        Some(mode) => mode.at_least(stop_mode),
+        None => false,
+    })
+}
+
+#[embassy_executor::task]
+async fn task_1() {
+    for _ in 0..9 {
+        info!("task 1: waiting for 500ms...");
+        defmt::assert!(stop_ready(StopMode::Stop2));
+        Timer::after_millis(500).await;
+    }
+}
+
+#[embassy_executor::task]
+async fn task_2() {
+    for _ in 0..5 {
+        info!("task 2: waiting for 1000ms...");
+        defmt::assert!(stop_ready(StopMode::Stop2));
+        Timer::after_millis(1000).await;
+    }
+
+    info!("Test OK");
+    cortex_m::asm::bkpt();
+}
+
+#[embassy_executor::main(executor = "embassy_stm32::executor::Executor", entry = "cortex_m_rt::entry")]
+async fn async_main(spawner: Spawner) {
+    let _ = config();
+
+    let mut config = Config::default();
+    config.rcc.ls = LsConfig::default_lse();
+
+    // System Clock seems cannot be greater than 16 MHz
+    #[cfg(any(feature = "stm32h563zi", feature = "stm32h503rb"))]
+    {
+        use embassy_stm32::rcc::HSIPrescaler;
+        config.rcc.hsi = Some(HSIPrescaler::DIV4); // 64 MHz HSI will need a /4
+    }
+
+    let p = init_with_config(config);
+    info!("Hello World!");
+
+    let now = NaiveDate::from_ymd_opt(2020, 5, 15)
+        .unwrap()
+        .and_hms_opt(10, 30, 15)
+        .unwrap();
+
+    let (rtc, _time_provider) = Rtc::new(p.RTC);
+
+    info!("set datetime");
+    critical_section::with(|cs| {
+        rtc.borrow_mut(cs).set_datetime(now.into()).expect("datetime not set");
+    });
+
+    info!("spawn");
+    spawner.spawn(task_1().unwrap());
+    spawner.spawn(task_2().unwrap());
+}

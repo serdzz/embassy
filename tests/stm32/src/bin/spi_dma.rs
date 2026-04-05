@@ -1,51 +1,111 @@
 #![no_std]
 #![no_main]
-#![feature(type_alias_impl_trait)]
+#[path = "../common.rs"]
+mod common;
 
-#[path = "../example_common.rs"]
-mod example_common;
+use common::*;
 use defmt::assert_eq;
 use embassy_executor::Spawner;
-use embassy_stm32::spi::{self, Spi};
+use embassy_stm32::gpio::{Level, Output, Speed};
+use embassy_stm32::mode::Async;
+use embassy_stm32::spi::mode::Master;
+use embassy_stm32::spi::{self, Spi, Word};
 use embassy_stm32::time::Hertz;
-use example_common::*;
 
-#[embassy_executor::main]
+#[cfg_attr(
+    feature = "stop",
+    embassy_executor::main(executor = "embassy_stm32::executor::Executor", entry = "cortex_m_rt::entry")
+)]
+#[cfg_attr(not(feature = "stop"), embassy_executor::main)]
 async fn main(_spawner: Spawner) {
-    let p = embassy_stm32::init(config());
+    let p = init();
     info!("Hello World!");
 
-    #[cfg(feature = "stm32f103c8")]
-    let (sck, mosi, miso, tx_dma, rx_dma) = (p.PA5, p.PA7, p.PA6, p.DMA1_CH3, p.DMA1_CH2);
-    #[cfg(feature = "stm32f429zi")]
-    let (sck, mosi, miso, tx_dma, rx_dma) = (p.PA5, p.PA7, p.PA6, p.DMA2_CH3, p.DMA2_CH2);
-    #[cfg(feature = "stm32h755zi")]
-    let (sck, mosi, miso, tx_dma, rx_dma) = (p.PA5, p.PB5, p.PA6, p.DMA1_CH0, p.DMA1_CH1);
-    #[cfg(feature = "stm32g491re")]
-    let (sck, mosi, miso, tx_dma, rx_dma) = (p.PA5, p.PA7, p.PA6, p.DMA1_CH1, p.DMA1_CH2);
-    #[cfg(feature = "stm32g071rb")]
-    let (sck, mosi, miso, tx_dma, rx_dma) = (p.PA5, p.PA7, p.PA6, p.DMA1_CH1, p.DMA1_CH2);
-    #[cfg(feature = "stm32wb55rg")]
-    let (sck, mosi, miso, tx_dma, rx_dma) = (p.PA5, p.PA7, p.PA6, p.DMA1_CH1, p.DMA1_CH2);
-    #[cfg(feature = "stm32u585ai")]
-    let (sck, mosi, miso, tx_dma, rx_dma) = (p.PE13, p.PE15, p.PE14, p.GPDMA1_CH0, p.GPDMA1_CH1);
+    let mut spi_peri = peri!(p, SPI);
+    let mut sck = peri!(p, SPI_SCK);
+    let mut mosi = peri!(p, SPI_MOSI);
+    let mut miso = peri!(p, SPI_MISO);
+    let mut tx_dma = peri!(p, SPI_TX_DMA);
+    let mut rx_dma = peri!(p, SPI_RX_DMA);
+    let irq = irqs!(UART);
+
+    let mut spi_config = spi::Config::default();
+    spi_config.frequency = Hertz(1_000_000);
 
     let mut spi = Spi::new(
-        p.SPI1,
-        sck,  // Arduino D13
-        mosi, // Arduino D11
-        miso, // Arduino D12
-        tx_dma,
-        rx_dma,
-        Hertz(1_000_000),
-        spi::Config::default(),
+        spi_peri.reborrow(),
+        sck.reborrow(),  // Arduino D13
+        mosi.reborrow(), // Arduino D11
+        miso.reborrow(), // Arduino D12
+        tx_dma.reborrow(),
+        rx_dma.reborrow(),
+        irq,
+        spi_config,
     );
 
-    let data: [u8; 9] = [0x00, 0xFF, 0xAA, 0x55, 0xC0, 0xFF, 0xEE, 0xC0, 0xDE];
+    test_txrx::<u8>(&mut spi).await;
+    test_txrx::<u16>(&mut spi).await;
+    drop(spi);
+
+    // test rx-only configuration
+    let mut spi = Spi::new_rxonly(
+        spi_peri.reborrow(),
+        sck.reborrow(),
+        miso.reborrow(),
+        // SPIv1/f1 requires txdma even if rxonly.
+        #[cfg(not(feature = "spi-v345"))]
+        tx_dma.reborrow(),
+        rx_dma.reborrow(),
+        irq,
+        spi_config,
+    );
+    let mut mosi_out = Output::new(mosi.reborrow(), Level::Low, Speed::VeryHigh);
+
+    test_rx::<u8>(&mut spi, &mut mosi_out).await;
+    test_rx::<u16>(&mut spi, &mut mosi_out).await;
+    drop(spi);
+    drop(mosi_out);
+
+    let mut spi = Spi::new_txonly(
+        spi_peri.reborrow(),
+        sck.reborrow(),
+        mosi.reborrow(),
+        tx_dma.reborrow(),
+        irq,
+        spi_config,
+    );
+    test_tx::<u8>(&mut spi).await;
+    test_tx::<u16>(&mut spi).await;
+    drop(spi);
+
+    let mut spi = Spi::new_txonly_nosck(spi_peri.reborrow(), mosi.reborrow(), tx_dma.reborrow(), irq, spi_config);
+    test_tx::<u8>(&mut spi).await;
+    test_tx::<u16>(&mut spi).await;
+    drop(spi);
+
+    info!("Test OK");
+    cortex_m::asm::bkpt();
+}
+
+async fn test_txrx<W: Word + From<u8> + defmt::Format + Eq>(spi: &mut Spi<'_, Async, Master>)
+where
+    W: core::ops::Not<Output = W>,
+{
+    let data: [W; 9] = [
+        0x00u8.into(),
+        0xFFu8.into(),
+        0xAAu8.into(),
+        0x55u8.into(),
+        0xC0u8.into(),
+        0xFFu8.into(),
+        0xEEu8.into(),
+        0xC0u8.into(),
+        0xDEu8.into(),
+    ];
 
     // Arduino pins D11 and D12 (MOSI-MISO) are connected together with a 1K resistor.
     // so we should get the data we sent back.
-    let mut buf = [0; 9];
+    let mut buf = [W::default(); 9];
     spi.transfer(&mut buf, &data).await.unwrap();
     assert_eq!(buf, data);
 
@@ -69,8 +129,12 @@ async fn main(_spawner: Spawner) {
     spi.transfer_in_place::<u8>(&mut []).await.unwrap();
     spi.read::<u8>(&mut []).await.unwrap();
     spi.write::<u8>(&[]).await.unwrap();
+    spi.blocking_transfer::<u8>(&mut [], &[]).unwrap();
+    spi.blocking_transfer_in_place::<u8>(&mut []).unwrap();
+    spi.blocking_read::<u8>(&mut []).unwrap();
+    spi.blocking_write::<u8>(&[]).unwrap();
 
-    // === Check mixing blocking with async.
+    // Check mixing blocking with async.
     spi.blocking_transfer(&mut buf, &data).unwrap();
     assert_eq!(buf, data);
     spi.transfer(&mut buf, &data).await.unwrap();
@@ -85,7 +149,47 @@ async fn main(_spawner: Spawner) {
     spi.blocking_write(&buf).unwrap();
     spi.blocking_read(&mut buf).unwrap();
     spi.write(&buf).await.unwrap();
+}
 
-    info!("Test OK");
-    cortex_m::asm::bkpt();
+async fn test_rx<W: Word + From<u8> + defmt::Format + Eq>(spi: &mut Spi<'_, Async, Master>, mosi_out: &mut Output<'_>)
+where
+    W: core::ops::Not<Output = W>,
+{
+    let mut buf = [W::default(); 9];
+
+    mosi_out.set_high();
+    spi.read(&mut buf).await.unwrap();
+    assert_eq!(buf, [!W::default(); 9]);
+    spi.blocking_read(&mut buf).unwrap();
+    assert_eq!(buf, [!W::default(); 9]);
+    spi.read(&mut buf).await.unwrap();
+    assert_eq!(buf, [!W::default(); 9]);
+    spi.read(&mut buf).await.unwrap();
+    assert_eq!(buf, [!W::default(); 9]);
+    spi.blocking_read(&mut buf).unwrap();
+    assert_eq!(buf, [!W::default(); 9]);
+    spi.blocking_read(&mut buf).unwrap();
+    assert_eq!(buf, [!W::default(); 9]);
+    mosi_out.set_low();
+    spi.read(&mut buf).await.unwrap();
+    assert_eq!(buf, [W::default(); 9]);
+    spi.read::<u8>(&mut []).await.unwrap();
+    spi.blocking_read::<u8>(&mut []).unwrap();
+}
+
+async fn test_tx<W: Word + From<u8> + defmt::Format + Eq>(spi: &mut Spi<'_, Async, Master>)
+where
+    W: core::ops::Not<Output = W>,
+{
+    let buf = [W::default(); 9];
+
+    // Test tx-only. Just check it doesn't hang, not much else we can do without using SPI slave.
+    spi.blocking_write(&buf).unwrap();
+    spi.write(&buf).await.unwrap();
+    spi.blocking_write(&buf).unwrap();
+    spi.blocking_write(&buf).unwrap();
+    spi.write(&buf).await.unwrap();
+    spi.write(&buf).await.unwrap();
+    spi.write::<u8>(&[]).await.unwrap();
+    spi.blocking_write::<u8>(&[]).unwrap();
 }

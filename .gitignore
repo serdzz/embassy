@@ -3,9 +3,15 @@ target_ci
 target_ci_stable
 Cargo.lock
 third_party
+webroot
 /Cargo.toml
-stm32-metapac-gen/out/
-stm32-metapac-backup
-stm32-metapac/src/chips
-stm32-metapac/src/peripherals
 out/
+# editor artifacts
+.zed
+.neoconf.json
+*.vim
+**/.idea
+**/.nvim.lua
+**/.cargo
+!**/tests/**/.cargo
+!**/examples/**/.cargo

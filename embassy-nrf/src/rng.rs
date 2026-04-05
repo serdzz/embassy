@@ -1,147 +1,136 @@
+//! Random Number Generator (RNG) driver.
+
+#![macro_use]
+
+use core::cell::{RefCell, RefMut};
+use core::future::poll_fn;
+use core::marker::PhantomData;
 use core::ptr;
-use core::sync::atomic::{AtomicPtr, Ordering};
 use core::task::Poll;
 
-use embassy_hal_common::drop::OnDrop;
-use embassy_hal_common::{into_ref, PeripheralRef};
-use embassy_sync::waitqueue::AtomicWaker;
-use futures::future::poll_fn;
+use critical_section::{CriticalSection, Mutex};
+use embassy_hal_internal::drop::OnDrop;
+use embassy_hal_internal::{Peri, PeripheralType};
+use embassy_sync::waitqueue::WakerRegistration;
 
-use crate::interrupt::InterruptExt;
-use crate::peripherals::RNG;
-use crate::{interrupt, pac, Peripheral};
+use crate::interrupt::typelevel::Interrupt;
+use crate::mode::{Async, Blocking, Mode};
+use crate::{interrupt, pac};
 
-impl RNG {
-    fn regs() -> &'static pac::rng::RegisterBlock {
-        unsafe { &*pac::RNG::ptr() }
-    }
+/// Interrupt handler.
+pub struct InterruptHandler<T: Instance> {
+    _phantom: PhantomData<T>,
 }
 
-static STATE: State = State {
-    ptr: AtomicPtr::new(ptr::null_mut()),
-    end: AtomicPtr::new(ptr::null_mut()),
-    waker: AtomicWaker::new(),
-};
+impl<T: Instance> interrupt::typelevel::Handler<T::Interrupt> for InterruptHandler<T> {
+    unsafe fn on_interrupt() {
+        let r = T::regs();
 
-struct State {
-    ptr: AtomicPtr<u8>,
-    end: AtomicPtr<u8>,
-    waker: AtomicWaker,
+        // Clear the event.
+        r.events_valrdy().write_value(0);
+
+        // Mutate the slice within a critical section,
+        // so that the future isn't dropped in between us loading the pointer and actually dereferencing it.
+        critical_section::with(|cs| {
+            let mut state = T::state().borrow_mut(cs);
+            // We need to make sure we haven't already filled the whole slice,
+            // in case the interrupt fired again before the executor got back to the future.
+            if !state.ptr.is_null() && state.ptr != state.end {
+                // If the future was dropped, the pointer would have been set to null,
+                // so we're still good to mutate the slice.
+                // The safety contract of `Rng::new` means that the future can't have been dropped
+                // without calling its destructor.
+                unsafe {
+                    *state.ptr = r.value().read().value();
+                    state.ptr = state.ptr.add(1);
+                }
+
+                if state.ptr == state.end {
+                    state.waker.wake();
+                }
+            }
+        });
+    }
 }
 
 /// A wrapper around an nRF RNG peripheral.
 ///
 /// It has a non-blocking API, and a blocking api through `rand`.
-pub struct Rng<'d> {
-    irq: PeripheralRef<'d, interrupt::RNG>,
+pub struct Rng<'d, M: Mode> {
+    r: pac::rng::Rng,
+    state: &'static State,
+    _phantom: PhantomData<(&'d (), M)>,
 }
 
-impl<'d> Rng<'d> {
+impl<'d> Rng<'d, Blocking> {
     /// Creates a new RNG driver from the `RNG` peripheral and interrupt.
     ///
     /// SAFETY: The future returned from `fill_bytes` must not have its lifetime end without running its destructor,
     /// e.g. using `mem::forget`.
     ///
     /// The synchronous API is safe.
-    pub fn new(_rng: impl Peripheral<P = RNG> + 'd, irq: impl Peripheral<P = interrupt::RNG> + 'd) -> Self {
-        into_ref!(irq);
+    pub fn new_blocking<T: Instance>(_rng: Peri<'d, T>) -> Self {
+        let this = Self {
+            r: T::regs(),
+            state: T::state(),
+            _phantom: PhantomData,
+        };
 
-        let this = Self { irq };
+        this.stop();
+
+        this
+    }
+}
+
+impl<'d> Rng<'d, Async> {
+    /// Creates a new RNG driver from the `RNG` peripheral and interrupt.
+    ///
+    /// SAFETY: The future returned from `fill_bytes` must not have its lifetime end without running its destructor,
+    /// e.g. using `mem::forget`.
+    ///
+    /// The synchronous API is safe.
+    pub fn new<T: Instance>(
+        _rng: Peri<'d, T>,
+        _irq: impl interrupt::typelevel::Binding<T::Interrupt, InterruptHandler<T>> + 'd,
+    ) -> Self {
+        let this = Self {
+            r: T::regs(),
+            state: T::state(),
+            _phantom: PhantomData,
+        };
 
         this.stop();
         this.disable_irq();
 
-        this.irq.set_handler(Self::on_interrupt);
-        this.irq.unpend();
-        this.irq.enable();
+        T::Interrupt::unpend();
+        unsafe { T::Interrupt::enable() };
 
         this
     }
 
-    fn on_interrupt(_: *mut ()) {
-        // Clear the event.
-        RNG::regs().events_valrdy.reset();
-
-        // Mutate the slice within a critical section,
-        // so that the future isn't dropped in between us loading the pointer and actually dereferencing it.
-        let (ptr, end) = critical_section::with(|_| {
-            let ptr = STATE.ptr.load(Ordering::Relaxed);
-            // We need to make sure we haven't already filled the whole slice,
-            // in case the interrupt fired again before the executor got back to the future.
-            let end = STATE.end.load(Ordering::Relaxed);
-            if !ptr.is_null() && ptr != end {
-                // If the future was dropped, the pointer would have been set to null,
-                // so we're still good to mutate the slice.
-                // The safety contract of `Rng::new` means that the future can't have been dropped
-                // without calling its destructor.
-                unsafe {
-                    *ptr = RNG::regs().value.read().value().bits();
-                }
-            }
-            (ptr, end)
-        });
-
-        if ptr.is_null() || ptr == end {
-            // If the future was dropped, there's nothing to do.
-            // If `ptr == end`, we were called by mistake, so return.
-            return;
-        }
-
-        let new_ptr = unsafe { ptr.add(1) };
-        match STATE
-            .ptr
-            .compare_exchange(ptr, new_ptr, Ordering::Relaxed, Ordering::Relaxed)
-        {
-            Ok(_) => {
-                let end = STATE.end.load(Ordering::Relaxed);
-                // It doesn't matter if `end` was changed under our feet, because then this will just be false.
-                if new_ptr == end {
-                    STATE.waker.wake();
-                }
-            }
-            Err(_) => {
-                // If the future was dropped or finished, there's no point trying to wake it.
-                // It will have already stopped the RNG, so there's no need to do that either.
-            }
-        }
-    }
-
-    fn stop(&self) {
-        RNG::regs().tasks_stop.write(|w| unsafe { w.bits(1) })
-    }
-
-    fn start(&self) {
-        RNG::regs().tasks_start.write(|w| unsafe { w.bits(1) })
-    }
-
     fn enable_irq(&self) {
-        RNG::regs().intenset.write(|w| w.valrdy().set());
+        self.r.intenset().write(|w| w.set_valrdy(true));
     }
 
     fn disable_irq(&self) {
-        RNG::regs().intenclr.write(|w| w.valrdy().clear());
+        self.r.intenclr().write(|w| w.set_valrdy(true));
     }
 
-    /// Enable or disable the RNG's bias correction.
-    ///
-    /// Bias correction removes any bias towards a '1' or a '0' in the bits generated.
-    /// However, this makes the generation of numbers slower.
-    ///
-    /// Defaults to disabled.
-    pub fn bias_correction(&self, enable: bool) {
-        RNG::regs().config.write(|w| w.dercen().bit(enable))
-    }
-
+    /// Fill the buffer with random bytes.
     pub async fn fill_bytes(&mut self, dest: &mut [u8]) {
-        if dest.len() == 0 {
+        if dest.is_empty() {
             return; // Nothing to fill
         }
 
         let range = dest.as_mut_ptr_range();
+        let state = self.state;
         // Even if we've preempted the interrupt, it can't preempt us again,
         // so we don't need to worry about the order we write these in.
-        STATE.ptr.store(range.start, Ordering::Relaxed);
-        STATE.end.store(range.end, Ordering::Relaxed);
+        critical_section::with(|cs| {
+            let mut state = state.borrow_mut(cs);
+            state.ptr = range.start;
+            state.end = range.end;
+        });
 
         self.enable_irq();
         self.start();
@@ -150,73 +139,203 @@ impl<'d> Rng<'d> {
             self.stop();
             self.disable_irq();
 
-            // The interrupt is now disabled and can't preempt us anymore, so the order doesn't matter here.
-            STATE.ptr.store(ptr::null_mut(), Ordering::Relaxed);
-            STATE.end.store(ptr::null_mut(), Ordering::Relaxed);
+            critical_section::with(|cs| {
+                let mut state = state.borrow_mut(cs);
+                state.ptr = ptr::null_mut();
+                state.end = ptr::null_mut();
+            });
         });
 
         poll_fn(|cx| {
-            STATE.waker.register(cx.waker());
-
-            // The interrupt will never modify `end`, so load it first and then get the most up-to-date `ptr`.
-            let end = STATE.end.load(Ordering::Relaxed);
-            let ptr = STATE.ptr.load(Ordering::Relaxed);
-
-            if ptr == end {
-                // We're done.
-                Poll::Ready(())
-            } else {
-                Poll::Pending
-            }
+            critical_section::with(|cs| {
+                let mut s = state.borrow_mut(cs);
+                s.waker.register(cx.waker());
+                if s.ptr == s.end {
+                    // We're done.
+                    Poll::Ready(())
+                } else {
+                    Poll::Pending
+                }
+            })
         })
         .await;
 
         // Trigger the teardown
         drop(on_drop);
     }
+}
 
+impl<'d, M: Mode> Rng<'d, M> {
+    fn stop(&self) {
+        self.r.tasks_stop().write_value(1)
+    }
+
+    fn start(&self) {
+        self.r.tasks_start().write_value(1)
+    }
+
+    /// Enable or disable the RNG's bias correction.
+    ///
+    /// Bias correction removes any bias towards a '1' or a '0' in the bits generated.
+    /// However, this makes the generation of numbers slower.
+    ///
+    /// Defaults to disabled.
+    pub fn set_bias_correction(&self, enable: bool) {
+        self.r.config().write(|w| w.set_dercen(enable))
+    }
+
+    /// Fill the buffer with random bytes, blocking version.
     pub fn blocking_fill_bytes(&mut self, dest: &mut [u8]) {
         self.start();
 
         for byte in dest.iter_mut() {
-            let regs = RNG::regs();
-            while regs.events_valrdy.read().bits() == 0 {}
-            regs.events_valrdy.reset();
-            *byte = regs.value.read().value().bits();
+            let regs = self.r;
+            while regs.events_valrdy().read() == 0 {}
+            regs.events_valrdy().write_value(0);
+            *byte = regs.value().read().value();
         }
 
         self.stop();
     }
-}
 
-impl<'d> Drop for Rng<'d> {
-    fn drop(&mut self) {
-        self.irq.disable()
-    }
-}
-
-impl<'d> rand_core::RngCore for Rng<'d> {
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
-        self.blocking_fill_bytes(dest);
-    }
-
-    fn next_u32(&mut self) -> u32 {
+    /// Generate a random u32
+    pub fn blocking_next_u32(&mut self) -> u32 {
         let mut bytes = [0; 4];
         self.blocking_fill_bytes(&mut bytes);
         // We don't care about the endianness, so just use the native one.
         u32::from_ne_bytes(bytes)
     }
 
-    fn next_u64(&mut self) -> u64 {
+    /// Generate a random u64
+    pub fn blocking_next_u64(&mut self) -> u64 {
         let mut bytes = [0; 8];
         self.blocking_fill_bytes(&mut bytes);
         u64::from_ne_bytes(bytes)
     }
+}
 
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
+impl<'d, M: Mode> Drop for Rng<'d, M> {
+    fn drop(&mut self) {
+        self.stop();
+        critical_section::with(|cs| {
+            let mut state = self.state.borrow_mut(cs);
+            state.ptr = ptr::null_mut();
+            state.end = ptr::null_mut();
+        });
+    }
+}
+
+impl<'d, M: Mode> rand_core_06::RngCore for Rng<'d, M> {
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        self.blocking_fill_bytes(dest);
+    }
+    fn next_u32(&mut self) -> u32 {
+        self.blocking_next_u32()
+    }
+    fn next_u64(&mut self) -> u64 {
+        self.blocking_next_u64()
+    }
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core_06::Error> {
         self.blocking_fill_bytes(dest);
         Ok(())
     }
 }
 
-impl<'d> rand_core::CryptoRng for Rng<'d> {}
+impl<'d, M: Mode> rand_core_06::CryptoRng for Rng<'d, M> {}
+
+impl<'d, M: Mode> rand_core_09::RngCore for Rng<'d, M> {
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        self.blocking_fill_bytes(dest);
+    }
+    fn next_u32(&mut self) -> u32 {
+        self.blocking_next_u32()
+    }
+    fn next_u64(&mut self) -> u64 {
+        self.blocking_next_u64()
+    }
+}
+
+impl<'d, M: Mode> rand_core_09::CryptoRng for Rng<'d, M> {}
+
+impl<'d, M: Mode> rand_core_10::TryRng for Rng<'d, M> {
+    type Error = core::convert::Infallible;
+
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+        Ok(self.blocking_next_u32())
+    }
+
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+        Ok(self.blocking_next_u64())
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
+        self.blocking_fill_bytes(dest);
+        Ok(())
+    }
+}
+
+impl<'d, M: Mode> rand_core_10::TryCryptoRng for Rng<'d, M> {}
+
+/// Peripheral static state
+pub(crate) struct State {
+    inner: Mutex<RefCell<InnerState>>,
+}
+
+struct InnerState {
+    ptr: *mut u8,
+    end: *mut u8,
+    waker: WakerRegistration,
+}
+
+unsafe impl Send for InnerState {}
+
+impl State {
+    pub(crate) const fn new() -> Self {
+        Self {
+            inner: Mutex::new(RefCell::new(InnerState::new())),
+        }
+    }
+
+    fn borrow_mut<'cs>(&'cs self, cs: CriticalSection<'cs>) -> RefMut<'cs, InnerState> {
+        self.inner.borrow(cs).borrow_mut()
+    }
+}
+
+impl InnerState {
+    const fn new() -> Self {
+        Self {
+            ptr: ptr::null_mut(),
+            end: ptr::null_mut(),
+            waker: WakerRegistration::new(),
+        }
+    }
+}
+
+pub(crate) trait SealedInstance {
+    fn regs() -> pac::rng::Rng;
+    fn state() -> &'static State;
+}
+
+/// RNG peripheral instance.
+#[allow(private_bounds)]
+pub trait Instance: SealedInstance + PeripheralType + 'static + Send {
+    /// Interrupt for this peripheral.
+    type Interrupt: interrupt::typelevel::Interrupt;
+}
+
+macro_rules! impl_rng {
+    ($type:ident, $pac_type:ident, $irq:ident) => {
+        impl crate::rng::SealedInstance for peripherals::$type {
+            fn regs() -> crate::pac::rng::Rng {
+                pac::$pac_type
+            }
+            fn state() -> &'static crate::rng::State {
+                static STATE: crate::rng::State = crate::rng::State::new();
+                &STATE
+            }
+        }
+        impl crate::rng::Instance for peripherals::$type {
+            type Interrupt = crate::interrupt::typelevel::$irq;
+        }
+    };
+}

@@ -1,27 +1,16 @@
-#![feature(type_alias_impl_trait)]
+use core::fmt::Write as _;
 
 use clap::Parser;
 use embassy_executor::{Executor, Spawner};
 use embassy_net::tcp::TcpSocket;
-use embassy_net::{ConfigStrategy, Ipv4Address, Ipv4Cidr, Stack, StackResources};
-use embedded_io::asynch::Write;
+use embassy_net::{Config, Ipv4Address, Ipv4Cidr, StackResources};
+use embassy_net_tuntap::TunTapDevice;
+use embassy_time::Duration;
+use embedded_io_async::Write;
 use heapless::Vec;
 use log::*;
-use rand_core::{OsRng, RngCore};
+use rand_core::{OsRng, TryRngCore};
 use static_cell::StaticCell;
-
-#[path = "../tuntap.rs"]
-mod tuntap;
-
-use crate::tuntap::TunTapDevice;
-
-macro_rules! singleton {
-    ($val:expr) => {{
-        type T = impl Sized;
-        static STATIC_CELL: StaticCell<T> = StaticCell::new();
-        STATIC_CELL.init_with(move || $val)
-    }};
-}
 
 #[derive(Parser)]
 #[clap(version = "1.0")]
@@ -35,8 +24,8 @@ struct Opts {
 }
 
 #[embassy_executor::task]
-async fn net_task(stack: &'static Stack<TunTapDevice>) -> ! {
-    stack.run().await
+async fn net_task(mut runner: embassy_net::Runner<'static, TunTapDevice>) -> ! {
+    runner.run().await
 }
 
 #[embassy_executor::task]
@@ -48,37 +37,33 @@ async fn main_task(spawner: Spawner) {
 
     // Choose between dhcp or static ip
     let config = if opts.static_ip {
-        ConfigStrategy::Static(embassy_net::Config {
+        Config::ipv4_static(embassy_net::StaticConfigV4 {
             address: Ipv4Cidr::new(Ipv4Address::new(192, 168, 69, 2), 24),
             dns_servers: Vec::new(),
             gateway: Some(Ipv4Address::new(192, 168, 69, 1)),
         })
     } else {
-        ConfigStrategy::Dhcp
+        Config::dhcpv4(Default::default())
     };
 
     // Generate random seed
     let mut seed = [0; 8];
-    OsRng.fill_bytes(&mut seed);
+    OsRng.try_fill_bytes(&mut seed).unwrap();
     let seed = u64::from_le_bytes(seed);
 
     // Init network stack
-    let stack = &*singleton!(Stack::new(
-        device,
-        config,
-        singleton!(StackResources::<1, 2, 8>::new()),
-        seed
-    ));
+    static RESOURCES: StaticCell<StackResources<3>> = StaticCell::new();
+    let (stack, runner) = embassy_net::new(device, config, RESOURCES.init(StackResources::new()), seed);
 
     // Launch network task
-    spawner.spawn(net_task(stack)).unwrap();
+    spawner.spawn(net_task(runner).unwrap());
 
     // Then we can use it!
     let mut rx_buffer = [0; 4096];
     let mut tx_buffer = [0; 4096];
     let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
 
-    socket.set_timeout(Some(embassy_net::SmolDuration::from_secs(10)));
+    socket.set_timeout(Some(Duration::from_secs(10)));
 
     let remote_endpoint = (Ipv4Address::new(192, 168, 69, 100), 8000);
     info!("connecting to {:?}...", remote_endpoint);
@@ -88,8 +73,10 @@ async fn main_task(spawner: Spawner) {
         return;
     }
     info!("connected!");
-    loop {
-        let r = socket.write_all(b"Hello!\n").await;
+    for i in 0.. {
+        let mut buf = heapless::String::<100>::new();
+        write!(buf, "Hello! ({})\r\n", i).unwrap();
+        let r = socket.write_all(buf.as_bytes()).await;
         if let Err(e) = r {
             warn!("write error: {:?}", e);
             return;
@@ -108,6 +95,6 @@ fn main() {
 
     let executor = EXECUTOR.init(Executor::new());
     executor.run(|spawner| {
-        spawner.spawn(main_task(spawner)).unwrap();
+        spawner.spawn(main_task(spawner).unwrap());
     });
 }
