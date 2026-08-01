@@ -13,7 +13,8 @@ use {defmt_rtt as _, panic_probe as _};
 #[embassy_executor::main(executor = "embassy_stm32::executor::Executor", entry = "cortex_m_rt::entry")]
 async fn async_main(spawner: Spawner) {
     let mut config = Config::default();
-    config.rcc.ls = LsConfig::default_lsi();
+    // LSE (32.768 kHz crystal) as RTC clock source.
+    config.rcc.ls = LsConfig::default_lse();
 
     // 8 MHz HSE + PLL → 32 MHz SYSCLK (max for STM32L1)
     // PLL: 8 MHz × 8 = 64 MHz VCO, ÷2 = 32 MHz output

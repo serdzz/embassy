@@ -38,7 +38,7 @@ async fn async_main(spawner: Spawner) {
     let p = embassy_stm32::init(config);
 
     spawner.spawn(unwrap!(wakeup_task(p.PB6.into())));
-    // After 60s the chip stays awake permanently, making it easy to re-flash.
+    // After 30s the chip stays awake permanently, making it easy to re-flash.
     spawner.spawn(unwrap!(stay_awake_timeout()));
 }
 
@@ -61,7 +61,7 @@ async fn wakeup_task(led: Peri<'static, AnyPin>) -> ! {
 }
 
 // When enable_debug_during_sleep is false, it is harder to reprogram the MCU.
-// After 60 s this task spins the executor, keeping the chip awake for easy re-flashing.
+// After 30 s this task spins the executor, keeping the chip awake for easy re-flashing.
 #[embassy_executor::task]
 async fn stay_awake_timeout() -> ! {
     Timer::after_secs(30).await;

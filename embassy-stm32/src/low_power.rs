@@ -358,7 +358,9 @@ fn configure_pwr(cs: CriticalSection) {
     };
 
     if get_driver().pause_time(cs).is_err() {
-        warn!("low_power: failed to pause time, not entering stop");
+        // Expected whenever the next alarm is closer than `config.min_stop_pause`,
+        // e.g. right after an early RTC wakeup or with short timers running.
+        debug!("low_power: failed to pause time, not entering stop");
     } else if platform::enter_stop(cs, stop_mode).is_err() {
         warn!("low_power: failed to enter stop");
     } else {
