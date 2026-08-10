@@ -211,6 +211,15 @@ mod platform {
 
     /// Exit stop mode, reinitializing timer and rcc if required
     pub fn exit_stop(_cs: CriticalSection) {
+        #[cfg(stm32f4)]
+        {
+            // The F4 always comes out of STOP running on the HSI, and unlike the L0/WL/WBA it has
+            // no "was in stop" status flag to consult -- reaching here means we were in STOP. The
+            // saved clock tree has to be restored, or the core keeps running at 16 MHz with every
+            // prescaler (the time driver's included) still calibrated for the configured sysclk.
+            crate::rcc::reinit_saved(_cs);
+        }
+
         #[cfg(any(stm32l0, stm32wl, stm32wb, stm32wba))]
         {
             // stm32wl5x is dual core and we don't want BOTH cores to re-initialize RCC so we hold a lock

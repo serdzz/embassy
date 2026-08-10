@@ -313,12 +313,21 @@ impl super::LPTimeDriver for RtcDriver {
             );
             Err(())
         } else {
-            self.rtc
-                .borrow(cs)
-                .borrow_mut()
-                .as_mut()
-                .unwrap()
-                .start_wakeup_alarm(time_until_next_alarm);
+            // Only arm the RTC wakeup timer when something is actually waiting on it. With no
+            // alarm pending the duration is effectively infinite, which puts the wakeup timer in
+            // its ck_spre range -- where WUTWF is slow or never appears, so the WUTR write is
+            // dropped and the timer ends up armed with a stale value that fires immediately.
+            // Such a wakeup is not wanted anyway: with nothing scheduled the chip should stay
+            // asleep until an interrupt such as EXTI wakes it. Time across the sleep is
+            // recovered from the RTC calendar either way, so skipping this costs nothing.
+            if self.alarm.borrow(cs).timestamp.get() != u64::MAX {
+                self.rtc
+                    .borrow(cs)
+                    .borrow_mut()
+                    .as_mut()
+                    .unwrap()
+                    .start_wakeup_alarm(time_until_next_alarm);
+            }
 
             regs_gp16().cr1().modify(|w| w.set_cen(false));
             Ok(())

@@ -6,6 +6,11 @@ use crate::pac::rtc::vals::Wucksel;
 use crate::peripherals::RTC;
 use crate::rtc::{RtcTimeProvider, SealedInstance};
 
+/// How many times to poll `WUTWF` before giving up on it. Two RTCCLK cycles at 32.768 kHz is
+/// ~61 us; each iteration is an APB register read, so this is generously above what a healthy
+/// part needs while still terminating.
+const WUTWF_POLL_LIMIT: u32 = 100_000;
+
 fn wucksel_compute_min(val: u32, rtc_hz: u32) -> (Wucksel, u32) {
     *[
         (Wucksel::DIV2, 2),
@@ -47,15 +52,30 @@ impl Rtc {
             regs.cr().modify(|w| w.set_wute(false));
 
             #[cfg(rtc_v2)]
-            {
-                regs.isr().modify(|w| w.set_wutf(false));
-                while !regs.isr().read().wutwf() {}
-            }
-
+            regs.isr().modify(|w| w.set_wutf(false));
             #[cfg(rtc_v3)]
-            {
-                regs.scr().write(|w| w.set_cwutf(crate::pac::rtc::vals::Calrf::CLEAR));
-                while !regs.icsr().read().wutwf() {}
+            regs.scr().write(|w| w.set_cwutf(crate::pac::rtc::vals::Calrf::CLEAR));
+
+            // WUTWF is raised by hardware a couple of RTCCLK cycles after WUTE goes 1 -> 0. When
+            // the wakeup timer was already stopped there is no such transition, and the flag can
+            // stay low indefinitely -- observed on an STM32F411 with WUTE=0 and WUTWF=0 together
+            // and unchanging. Spinning on it deadlocks the executor inside a critical section
+            // with interrupts masked, so the chip never wakes again and even a pending EXTI is
+            // never serviced. Bound the wait: the timer is disabled either way, which is the
+            // condition the flag exists to confirm.
+            let mut writable = false;
+            for _ in 0..WUTWF_POLL_LIMIT {
+                #[cfg(rtc_v2)]
+                let ready = regs.isr().read().wutwf();
+                #[cfg(rtc_v3)]
+                let ready = regs.icsr().read().wutwf();
+                if ready {
+                    writable = true;
+                    break;
+                }
+            }
+            if !writable {
+                warn!("rtc: WUTWF never asserted; programming the wakeup timer regardless");
             }
 
             regs.cr().modify(|w| w.set_wucksel(wucksel));
