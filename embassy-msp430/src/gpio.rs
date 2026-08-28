@@ -16,8 +16,10 @@ use core::task::{Context, Poll};
 use embassy_hal_internal::{Peri, PeripheralType, impl_peripheral};
 use embassy_sync::waitqueue::AtomicWaker;
 
-/// Number of pins that can raise an interrupt: P1 through P4, 8 bits each.
-const IRQ_PINS: usize = 32;
+use crate::chip::{self, PinFunction, PortReg};
+
+/// Number of pins that can raise an interrupt: eight per interrupt-capable port.
+const IRQ_PINS: usize = chip::IRQ_PORTS as usize * 8;
 
 #[allow(clippy::declare_interior_mutable_const)]
 const NEW_AW: AtomicWaker = AtomicWaker::new();
@@ -60,34 +62,26 @@ pub enum Pull {
     Down,
 }
 
-// Register offsets within a port pair. The odd-numbered port of a pair uses these directly; the
-// even-numbered one adds a byte.
-const IN: u16 = 0x00;
-const OUT: u16 = 0x02;
-const DIR: u16 = 0x04;
-const REN: u16 = 0x06;
-const SEL0: u16 = 0x0a;
-const SEL1: u16 = 0x0c;
-const IES: u16 = 0x18;
-const IE: u16 = 0x1a;
-const IFG: u16 = 0x1c;
+// The offsets themselves live in `chip`; these names keep the call sites readable.
+const IN: PortReg = PortReg::In;
+const OUT: PortReg = PortReg::Out;
+const DIR: PortReg = PortReg::Dir;
+const REN: PortReg = PortReg::Ren;
+const IES: PortReg = PortReg::Ies;
+const IE: PortReg = PortReg::Ie;
+const IFG: PortReg = PortReg::Ifg;
 
-const fn port_base(port: u8) -> u16 {
-    // PA = P1/P2 at 0x0200, PB = P3/P4 at 0x0220, PC = P5/P6 at 0x0240.
-    //
-    // Written as shifts rather than a multiply on purpose: MSP430 has no multiply instruction, so
-    // `*` would become a call to `__mspabi_mpyi` even here.
-    0x0200 + ((port as u16 >> 1) << 5)
-}
-
-const fn reg(port: u8, offset: u16) -> *mut u8 {
-    (port_base(port) + offset + (port as u16 & 1)) as *mut u8
-}
-
-/// Address of the port's interrupt vector register, which reports and clears the highest-priority
-/// pending flag in one read.
-const fn iv_reg(port: u8) -> *mut u16 {
-    (port_base(port) + if port & 1 == 0 { 0x0e } else { 0x1e }) as *mut u16
+/// Address of one of a port's registers.
+///
+/// Panics if the device has no such register, which only a driver bug can ask for: the pull
+/// resistors are guarded by [`chip::HAS_PULL`] and the interrupt registers by
+/// [`chip::IRQ_PORTS`].
+#[inline]
+fn reg(port: u8, which: PortReg) -> *mut u8 {
+    match chip::port_reg(port, which) {
+        Some(r) => r,
+        None => panic!("this device has no {:?} register for P{}", which, port + 1),
+    }
 }
 
 /// Read-modify-write a port register.
@@ -95,9 +89,9 @@ const fn iv_reg(port: u8) -> *mut u16 {
 /// Ports are shared between pins, and the interrupt registers are also touched from the port ISR,
 /// so the read and the write have to be one indivisible step.
 #[inline]
-fn modify(port: u8, offset: u16, f: impl FnOnce(u8) -> u8) {
+fn modify(port: u8, which: PortReg, f: impl FnOnce(u8) -> u8) {
     critical_section::with(|_| {
-        let r = reg(port, offset);
+        let r = reg(port, which);
         // SAFETY: `r` is a valid port register for an existing port, and the critical section
         // keeps the read-modify-write from racing another pin or the port ISR.
         unsafe { r.write_volatile(f(r.read_volatile())) }
@@ -105,48 +99,60 @@ fn modify(port: u8, offset: u16, f: impl FnOnce(u8) -> u8) {
 }
 
 #[inline]
-fn read(port: u8, offset: u16) -> u8 {
+fn read(port: u8, which: PortReg) -> u8 {
     // SAFETY: a plain volatile read of an existing port register.
-    unsafe { reg(port, offset).read_volatile() }
+    unsafe { reg(port, which).read_volatile() }
 }
 
-/// Hand the pin to its first alternate function (`SEL1:SEL0 = 01`), which is where the eUSCI and
-/// timer signals live on this family.
+/// Set or clear one bit of a register the caller has already located.
+///
+/// Used by the `chip` modules, whose function-select registers do not fit [`PortReg`].
+#[inline]
+pub(crate) fn modify_reg(r: *mut u8, bit: u8, set: bool) {
+    critical_section::with(|_| {
+        // SAFETY: the caller passes a port register address, and the critical section makes the
+        // read-modify-write indivisible.
+        unsafe {
+            let v = r.read_volatile();
+            r.write_volatile(if set { v | bit } else { v & !bit });
+        }
+    })
+}
+
+/// Hand the pin to its first alternate function, which is where the serial peripherals and the
+/// timer outputs live.
+// Only called by the peripheral drivers, which not every device has.
+#[allow(dead_code)]
 pub(crate) fn set_alternate1(pin: &AnyPin) {
-    let port = pin.pin_port >> 3;
-    let bit = 1u8 << (pin.pin_port & 7);
-    modify(port, SEL1, |v| v & !bit);
-    modify(port, SEL0, |v| v | bit);
+    chip::set_pin_function(pin.pin_port >> 3, 1u8 << (pin.pin_port & 7), PinFunction::Alternate1);
 }
 
-/// Hand the pin to its second alternate function (`SEL1:SEL0 = 10`).
+/// Hand the pin to its second alternate function.
+// Only called by the peripheral drivers, which not every device has.
+#[allow(dead_code)]
 pub(crate) fn set_alternate2(pin: &AnyPin) {
-    let port = pin.pin_port >> 3;
-    let bit = 1u8 << (pin.pin_port & 7);
-    modify(port, SEL0, |v| v & !bit);
-    modify(port, SEL1, |v| v | bit);
+    chip::set_pin_function(pin.pin_port >> 3, 1u8 << (pin.pin_port & 7), PinFunction::Alternate2);
 }
 
-/// Hand the pin to its third alternate function (`SEL1:SEL0 = 11`), which on this family is the
-/// analog one: the digital input buffer is disconnected, so a mid-rail analog voltage cannot make
-/// it oscillate.
+/// Hand the pin to the analog function, which disconnects the digital input buffer so a mid-rail
+/// voltage cannot make it oscillate.
+// Only called by the peripheral drivers, which not every device has.
+#[allow(dead_code)]
 pub(crate) fn set_analog(pin: &impl SealedPin) {
     let pin_port = pin.pin_port();
     let port = pin_port >> 3;
     let bit = 1u8 << (pin_port & 7);
     // Take it out of any output mode first, otherwise the pin fights the source being measured.
     modify(port, DIR, |v| v & !bit);
-    modify(port, REN, |v| v & !bit);
-    modify(port, SEL0, |v| v | bit);
-    modify(port, SEL1, |v| v | bit);
+    if chip::HAS_PULL {
+        modify(port, REN, |v| v & !bit);
+    }
+    chip::set_pin_function(port, bit, PinFunction::Alternate3);
 }
 
 /// Take the pin back from whatever peripheral had it.
 pub(crate) fn set_gpio_function(pin: &AnyPin) {
-    let port = pin.pin_port >> 3;
-    let bit = 1u8 << (pin.pin_port & 7);
-    modify(port, SEL0, |v| v & !bit);
-    modify(port, SEL1, |v| v & !bit);
+    chip::set_pin_function(pin.pin_port >> 3, 1u8 << (pin.pin_port & 7), PinFunction::Gpio);
 }
 
 /// A GPIO pin with its mode chosen at runtime.
@@ -160,8 +166,7 @@ impl<'d> Flex<'d> {
     pub fn new(pin: Peri<'d, impl Pin>) -> Self {
         let this = Self { pin: pin.into() };
         // Take the pin away from whatever peripheral had it multiplexed.
-        modify(this.port(), SEL0, |v| v & !this.bit());
-        modify(this.port(), SEL1, |v| v & !this.bit());
+        set_gpio_function(&this.pin);
         this
     }
 
@@ -180,6 +185,15 @@ impl<'d> Flex<'d> {
     pub fn set_as_input(&mut self, pull: Pull) {
         let bit = self.bit();
         let port = self.port();
+        if !chip::HAS_PULL {
+            assert!(
+                pull == Pull::None,
+                "this device has no pull resistors; the pin needs an external one"
+            );
+            modify(port, DIR, |v| v & !bit);
+            return;
+        }
+
         match pull {
             Pull::None => modify(port, REN, |v| v & !bit),
             // With the pin an input, the output latch picks which way the resistor pulls.
@@ -201,7 +215,9 @@ impl<'d> Flex<'d> {
     #[inline]
     pub fn set_as_output(&mut self) {
         let bit = self.bit();
-        modify(self.port(), REN, |v| v & !bit);
+        if chip::HAS_PULL {
+            modify(self.port(), REN, |v| v & !bit);
+        }
         modify(self.port(), DIR, |v| v | bit);
     }
 
@@ -306,8 +322,9 @@ impl<'d> Flex<'d> {
     fn wait_for_edge(&mut self, rising: bool) -> PortInputFuture<'_, 'd> {
         let port = self.port();
         assert!(
-            port < 4,
-            "only P1..P4 can raise interrupts on this chip, P{} cannot",
+            port < chip::IRQ_PORTS,
+            "only P1..P{} can raise interrupts on this device, P{} cannot",
+            chip::IRQ_PORTS,
             port + 1
         );
         let bit = self.bit();
@@ -328,12 +345,14 @@ impl<'d> Drop for Flex<'d> {
     fn drop(&mut self) {
         let bit = self.bit();
         let port = self.port();
-        if port < 4 {
+        if port < chip::IRQ_PORTS {
             modify(port, IE, |v| v & !bit);
             modify(port, IFG, |v| v & !bit);
         }
         modify(port, DIR, |v| v & !bit);
-        modify(port, REN, |v| v & !bit);
+        if chip::HAS_PULL {
+            modify(port, REN, |v| v & !bit);
+        }
     }
 }
 
@@ -558,20 +577,34 @@ pub(crate) use impl_pin;
 
 /// Handle a port interrupt.
 ///
-/// `PxIV` reports the highest-priority pending pin and clears its flag in the same read, so this
-/// drains one pin per call and the hardware re-raises the interrupt if more are pending.
+/// Only one pin is dealt with per call. Where the hardware has a vector register that is inherent:
+/// it reports the highest-priority flag and clears it. Where it does not, taking the lowest pending
+/// pin keeps the two paths the same shape, and the hardware re-raises the interrupt for the rest.
 fn on_port_irq(port: u8) {
-    // SAFETY: `port` is one of the interrupt-capable ports, so this is a real IV register.
-    let iv = unsafe { iv_reg(port).read_volatile() };
-    if iv == 0 {
-        return;
-    }
-    let pin = (iv / 2 - 1) as u8;
+    let pin = if chip::HAS_PORT_IV {
+        // SAFETY: `port` is interrupt-capable, so this is a real vector register. Reading it is
+        // what clears the flag it reports.
+        let iv = unsafe { chip::port_iv(port).read_volatile() };
+        if iv == 0 {
+            return;
+        }
+        (iv / 2 - 1) as u8
+    } else {
+        let pending = read(port, IFG) & read(port, IE);
+        if pending == 0 {
+            return;
+        }
+        pending.trailing_zeros() as u8
+    };
     let bit = 1u8 << pin;
 
-    // Mask the pin: that is how the future learns its edge arrived, and it stops the interrupt
-    // from firing again before the task has had a chance to run.
+    // Mask the pin: that is how the future learns its edge arrived, and it stops the interrupt from
+    // firing again before the task has had a chance to run.
     modify(port, IE, |v| v & !bit);
+    if !chip::HAS_PORT_IV {
+        // Nothing cleared the flag on the way in.
+        modify(port, IFG, |v| v & !bit);
+    }
     PORT_WAKERS[((port << 3) | pin) as usize].wake();
 }
 
@@ -585,7 +618,10 @@ embassy_executor::msp430_interrupt! {
     unsafe fn PORT2() {
         on_port_irq(1);
     }
+}
 
+#[cfg(feature = "msp430fr2355")]
+embassy_executor::msp430_interrupt! {
     /// Port 3 edge.
     unsafe fn PORT3() {
         on_port_irq(2);

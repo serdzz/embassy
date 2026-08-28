@@ -1,11 +1,15 @@
-//! Clock system (CS) configuration.
+//! The FR2xx clock system: an FLL-trimmed DCO for MCLK and SMCLK, and a choice of low-frequency
+//! source for ACLK.
 //!
 //! Out of reset the FLL runs the DCO at about 1 MHz off the internal REFO oscillator, and ACLK is
-//! taken from XT1. This module lets you pick a different DCO frequency and a different ACLK source
-//! without touching the FLL by hand.
+//! taken from XT1.
 
 use core::arch::asm;
 
+#[allow(unused_imports)]
+use PeripheralClock as _;
+
+use super::{Clocks, PeripheralClock};
 use crate::pac;
 
 /// Source for ACLK, the low-frequency clock that keeps running in LPM3.
@@ -98,17 +102,6 @@ impl Div {
     }
 }
 
-/// Clock a peripheral's bit rate generator runs from.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum PeripheralClock {
-    /// SMCLK. Fast enough for high bit rates, but it stops in LPM2 and deeper.
-    #[default]
-    Smclk,
-    /// ACLK, 32768 Hz. Slow, but the peripheral keeps running down to LPM3.
-    Aclk,
-}
-
 /// Clock system configuration.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -122,18 +115,6 @@ pub struct Config {
     pub smclk_div: Div,
     /// ACLK source.
     pub aclk: AclkSource,
-}
-
-/// Frequencies the clock system was actually configured for.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Clocks {
-    /// MCLK, the CPU clock, in Hz.
-    pub mclk: u32,
-    /// SMCLK, the peripheral clock, in Hz.
-    pub smclk: u32,
-    /// ACLK, in Hz.
-    pub aclk: u32,
 }
 
 /// SCG0 bit of the status register. Setting it holds the FLL while it is being reprogrammed.

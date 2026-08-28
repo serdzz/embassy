@@ -24,8 +24,7 @@ use critical_section::{CriticalSection, Mutex};
 use embassy_time_driver::Driver;
 use embassy_time_queue_utils::Queue;
 
-use crate::pac;
-use crate::pac::tb0::tb0iv::Tbiv;
+use crate::chip;
 
 /// Half of the 16-bit counter's range. `period` is bumped when the counter reaches this value, and
 /// again when it wraps.
@@ -36,10 +35,40 @@ const HALF_PERIOD: u16 = 0x8000;
 /// keeps a nearly-due alarm from being deferred by a whole half-period.
 const ARM_HORIZON: u64 = 0xc000;
 
-fn tb0() -> pac::Tb0 {
-    // SAFETY: this driver owns TB0. `crate::init` never hands it out, and every access below is a
-    // single volatile read or write of a register only this module touches.
-    unsafe { pac::Tb0::steal() }
+// Timer_B register offsets from the control register, which is where `chip::TB0_BASE` points.
+const CTL: u16 = 0x00;
+const CCTL0: u16 = 0x02;
+const CCTL1: u16 = 0x04;
+const R: u16 = 0x10;
+const CCR0: u16 = 0x12;
+const CCR1: u16 = 0x14;
+
+// Control register bits.
+const TBIE: u16 = 0x0002;
+const TBCLR: u16 = 0x0004;
+const MC_CONTINUOUS: u16 = 0x0020;
+const TBSSEL_ACLK: u16 = 0x0100;
+
+// Capture/compare control bits.
+const CCIFG: u16 = 0x0001;
+const CCIE: u16 = 0x0010;
+
+#[inline]
+fn read(offset: u16) -> u16 {
+    // SAFETY: this driver owns the timer. `crate::init` never hands it out, and this is a plain
+    // volatile read of one of its registers.
+    unsafe { ((chip::TB0_BASE + offset) as *mut u16).read_volatile() }
+}
+
+#[inline]
+fn write(offset: u16, value: u16) {
+    // SAFETY: as above, a volatile write to a register only this module touches.
+    unsafe { ((chip::TB0_BASE + offset) as *mut u16).write_volatile(value) }
+}
+
+#[inline]
+fn modify(offset: u16, f: impl FnOnce(u16) -> u16) {
+    critical_section::with(|_| write(offset, f(read(offset))));
 }
 
 /// Combine the software `period` counter with the hardware counter into a 64-bit tick count.
@@ -76,7 +105,7 @@ impl Tb0Driver {
             let t = (period as u64) << 15;
             if self.alarm_at.borrow(cs).get() < t + ARM_HORIZON {
                 // `set_alarm` already wrote the right compare value, just let it through.
-                tb0().tb0cctl0().modify(|_, w| w.ccifg().ccifg_0().ccie().ccie_1());
+                modify(CCTL0, |v| (v & !CCIFG) | CCIE);
             }
         })
     }
@@ -94,31 +123,30 @@ impl Tb0Driver {
     /// Returns `false` if `timestamp` is already in the past, meaning the alarm will *not* fire and
     /// the caller has to handle the expiry itself.
     fn set_alarm(&self, cs: CriticalSection, timestamp: u64) -> bool {
-        let t = tb0();
         self.alarm_at.borrow(cs).set(timestamp);
 
         if timestamp <= self.now() {
-            t.tb0cctl0().modify(|_, w| w.ccie().ccie_0());
+            modify(CCTL0, |v| v & !CCIE);
             self.alarm_at.borrow(cs).set(u64::MAX);
             return false;
         }
 
         // Write the compare value even when the interrupt stays masked: `next_period` unmasks it
         // later without recomputing anything.
-        t.tb0ccr0().write(|w| unsafe { w.bits(timestamp as u16) });
+        write(CCR0, timestamp as u16);
 
         // Only unmask if the alarm falls within the current 16-bit window. Otherwise CCR0 would
         // match on an earlier wrap of the counter.
         if timestamp - self.now() < ARM_HORIZON {
-            t.tb0cctl0().modify(|_, w| w.ccifg().ccifg_0().ccie().ccie_1());
+            modify(CCTL0, |v| (v & !CCIFG) | CCIE);
         } else {
-            t.tb0cctl0().modify(|_, w| w.ccie().ccie_0());
+            modify(CCTL0, |v| v & !CCIE);
         }
 
         // The counter may have passed `timestamp` while we were setting all this up, in which case
         // we can't tell whether CCR0 matched. Disarm and report it as missed.
         if timestamp <= self.now() {
-            t.tb0cctl0().modify(|_, w| w.ccie().ccie_0());
+            modify(CCTL0, |v| v & !CCIE);
             self.alarm_at.borrow(cs).set(u64::MAX);
             return false;
         }
@@ -131,7 +159,7 @@ impl Driver for Tb0Driver {
     fn now(&self) -> u64 {
         critical_section::with(|cs| {
             let period = self.period.borrow(cs).get();
-            let counter = tb0().tb0r().read().bits();
+            let counter = read(R);
             calc_now(period, counter)
         })
     }
@@ -152,43 +180,56 @@ impl Driver for Tb0Driver {
 
 /// Start the clock. Called once by [`crate::init`].
 pub(crate) fn init(_cs: CriticalSection) {
-    let t = tb0();
-
     // Continuous mode, ACLK, no divider, counter cleared, overflow interrupt on.
-    t.tb0ctl().write(|w| {
-        w.tbssel()
-            .aclk()
-            .id()
-            ._1()
-            .mc()
-            .continuous()
-            .tbclr()
-            .set_bit()
-            .tbie()
-            .tbie_1()
-    });
+    write(CTL, TBSSEL_ACLK | MC_CONTINUOUS | TBCLR | TBIE);
 
     // CCR1 gives us the half-overflow tick that keeps `period`'s parity meaningful.
-    t.tb0ccr1().write(|w| unsafe { w.bits(HALF_PERIOD) });
-    t.tb0cctl1().write(|w| w.ccie().ccie_1());
+    write(CCR1, HALF_PERIOD);
+    write(CCTL1, CCIE);
 
     // CCR0 is the alarm. It stays masked until `set_alarm` has something to wait for.
-    t.tb0cctl0().write(|w| w.ccie().ccie_0());
+    write(CCTL0, 0);
 }
 
+#[cfg(feature = "msp430fr2355")]
 embassy_executor::msp430_interrupt! {
     /// CCR0 compare match: an `embassy-time` alarm came due.
     unsafe fn TIMER0_B0() {
-        // CCR0 has its own vector and no TB0IV entry, so its flag has to be cleared by hand.
-        tb0().tb0cctl0().modify(|_, w| w.ccifg().ccifg_0().ccie().ccie_0());
+        // CCR0 has its own vector and no entry in the vector register, so its flag has to be
+        // cleared by hand.
+        modify(CCTL0, |v| v & !(CCIFG | CCIE));
         critical_section::with(|cs| DRIVER.trigger_alarm(cs));
     }
 
     /// Counter overflow and CCR1 half-overflow: keeps the 64-bit tick count moving.
     unsafe fn TIMER0_B1() {
-        // Reading TB0IV clears the highest-priority flag it reports.
-        match tb0().tb0iv().read().tbiv().variant() {
-            Some(Tbiv::Tbccr1) | Some(Tbiv::Tbifg) => DRIVER.next_period(),
+        // Reading the vector register clears the highest-priority flag it reports. 2 is CCR1, 14
+        // is the counter overflow.
+        // SAFETY: a volatile read of this timer's vector register.
+        match unsafe { (chip::TB0_IV as *mut u16).read_volatile() } {
+            2 | 14 => DRIVER.next_period(),
+            _ => {}
+        }
+    }
+}
+
+#[cfg(feature = "msp430f149")]
+embassy_executor::msp430_interrupt! {
+    /// CCR0 compare match: an `embassy-time` alarm came due.
+    unsafe fn TIMERB0() {
+        // CCR0 has its own vector and no entry in the vector register, so its flag has to be
+        // cleared by hand.
+        modify(CCTL0, |v| v & !(CCIFG | CCIE));
+        critical_section::with(|cs| DRIVER.trigger_alarm(cs));
+    }
+
+    /// Counter overflow and CCR1 half-overflow: keeps the 64-bit tick count moving.
+    unsafe fn TIMERB1() {
+        // Reading the vector register clears the highest-priority flag it reports. 2 is CCR1, 14
+        // is the counter overflow.
+        // SAFETY: a volatile read of this timer's vector register.
+        match unsafe { (chip::TB0_IV as *mut u16).read_volatile() } {
+            2 | 14 => DRIVER.next_period(),
             _ => {}
         }
     }

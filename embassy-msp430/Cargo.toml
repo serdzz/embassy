@@ -17,6 +17,7 @@ categories = [
 build = [
     {group = "nightly", target = "msp430-none-elf", features = ["msp430fr2355", "defmt"], build-std = ["core"]},
     {group = "nightly", target = "msp430-none-elf", features = ["msp430fr2355", "time-driver-tb0"], build-std = ["core"]},
+    {group = "nightly", target = "msp430-none-elf", features = ["msp430f149", "time-driver-tb0"], build-std = ["core"]},
 ]
 
 [dependencies]
@@ -41,6 +42,8 @@ document-features = "0.2.7"
 
 # Chip support
 msp430fr2355-pac = { package = "msp430fr2355", version = "0.6.1", features = ["rt", "critical-section"], optional = true }
+# Not on crates.io; generated and vendored at the repository root.
+msp430f149-pac = { package = "msp430f149", version = "0.1.0", path = "../msp430f149-pac", features = ["rt", "critical-section"], optional = true }
 
 [features]
 default = []
@@ -48,8 +51,15 @@ default = []
 #! ### Chip selection
 #! Exactly one chip feature must be enabled.
 
-## MSP430FR2355: 32 kB FRAM, 4 kB SRAM.
+## MSP430FR2355: 32 kB FRAM, 4 kB SRAM. Every driver in this crate supports it.
 msp430fr2355 = ["dep:msp430fr2355-pac"]
+
+## MSP430F149: 60 kB flash, 2 kB SRAM.
+##
+## The F1xx family shares little with the FR2xx parts below the CPU, so only the drivers that
+## genuinely carry over are available: GPIO, the time driver, the clock system and the watchdog.
+## Its USARTs and ADC12 have no drivers here yet.
+msp430f149 = ["dep:msp430f149-pac"]
 
 #! ### Time driver
 

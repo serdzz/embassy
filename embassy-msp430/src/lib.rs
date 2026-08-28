@@ -12,30 +12,49 @@
 // This mod MUST go first, so that the others see its macros.
 pub(crate) mod fmt;
 
-#[cfg(not(feature = "msp430fr2355"))]
+#[cfg(not(any(feature = "msp430fr2355", feature = "msp430f149")))]
 compile_error!("No chip selected. Enable exactly one chip feature, e.g. `msp430fr2355`.");
 
+#[cfg(all(feature = "msp430fr2355", feature = "msp430f149"))]
+compile_error!("More than one chip feature is enabled. Enable exactly one.");
+
+pub(crate) mod chip;
+
+/// Peripheral access crate for the selected chip.
+#[cfg(feature = "msp430f149")]
+pub use msp430f149_pac as pac;
 /// Peripheral access crate for the selected chip.
 #[cfg(feature = "msp430fr2355")]
 pub use msp430fr2355_pac as pac;
 pub use {embassy_executor, msp430, msp430_rt};
 
-pub mod adc;
 pub mod clock;
-pub(crate) mod eusci;
 pub mod gpio;
-pub mod i2c;
-pub mod pwm;
-pub mod rtc;
-pub mod spi;
-pub mod uart;
 pub mod wdt;
+
+// The FR2xx serial and analog peripherals share nothing with the F1xx ones below the pin, so these
+// are for now only available on the family they were written against.
+#[cfg(feature = "msp430fr2355")]
+pub mod adc;
+#[cfg(feature = "msp430fr2355")]
+pub(crate) mod eusci;
+#[cfg(feature = "msp430fr2355")]
+pub mod i2c;
+#[cfg(feature = "msp430fr2355")]
+pub mod pwm;
+#[cfg(feature = "msp430fr2355")]
+pub mod rtc;
+#[cfg(feature = "msp430fr2355")]
+pub mod spi;
+#[cfg(feature = "msp430fr2355")]
+pub mod uart;
 
 #[cfg(feature = "_time-driver")]
 mod time_driver;
 
 pub use embassy_hal_internal::{Peri, PeripheralType};
 
+#[cfg(feature = "msp430fr2355")]
 embassy_hal_internal::peripherals! {
     P1_0, P1_1, P1_2, P1_3, P1_4, P1_5, P1_6, P1_7,
     P2_0, P2_1, P2_2, P2_3, P2_4, P2_5, P2_6, P2_7,
@@ -44,7 +63,7 @@ embassy_hal_internal::peripherals! {
     P5_0, P5_1, P5_2, P5_3, P5_4,
     P6_0, P6_1, P6_2, P6_3, P6_4, P6_5, P6_6,
 
-    // TB0 is missing on purpose when it is the `embassy-time` driver: it is not the user's to take.
+    // The time driver's timer is missing on purpose: it is not the user's to take.
     #[cfg(not(feature = "time-driver-tb0"))]
     TB0,
     TB1,
@@ -60,6 +79,27 @@ embassy_hal_internal::peripherals! {
     RTC,
     CRC,
     MPY32,
+}
+
+#[cfg(feature = "msp430f149")]
+embassy_hal_internal::peripherals! {
+    P1_0, P1_1, P1_2, P1_3, P1_4, P1_5, P1_6, P1_7,
+    P2_0, P2_1, P2_2, P2_3, P2_4, P2_5, P2_6, P2_7,
+    P3_0, P3_1, P3_2, P3_3, P3_4, P3_5, P3_6, P3_7,
+    P4_0, P4_1, P4_2, P4_3, P4_4, P4_5, P4_6, P4_7,
+    P5_0, P5_1, P5_2, P5_3, P5_4, P5_5, P5_6, P5_7,
+    P6_0, P6_1, P6_2, P6_3, P6_4, P6_5, P6_6, P6_7,
+
+    // The time driver's timer is missing on purpose: it is not the user's to take.
+    #[cfg(not(feature = "time-driver-tb0"))]
+    TB0,
+    TA0,
+
+    USART0,
+    USART1,
+
+    ADC12,
+    MPY,
 }
 
 gpio::impl_pin!(P1_0, 0, 0);
@@ -107,6 +147,16 @@ gpio::impl_pin!(P6_4, 5, 4);
 gpio::impl_pin!(P6_5, 5, 5);
 gpio::impl_pin!(P6_6, 5, 6);
 
+// The FR2355's P5 and P6 stop short of eight pins; the F149's do not.
+#[cfg(feature = "msp430f149")]
+gpio::impl_pin!(P5_5, 4, 5);
+#[cfg(feature = "msp430f149")]
+gpio::impl_pin!(P5_6, 4, 6);
+#[cfg(feature = "msp430f149")]
+gpio::impl_pin!(P5_7, 4, 7);
+#[cfg(feature = "msp430f149")]
+gpio::impl_pin!(P6_7, 5, 7);
+
 /// HAL configuration.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -129,8 +179,9 @@ pub fn clocks() -> Option<clock::Clocks> {
 
 /// Initialise the HAL and take the peripheral singletons.
 ///
-/// This stops the watchdog, applies `config` to the clock system, releases the I/O from the
-/// low-power lock the chip boots into, and starts the `embassy-time` driver if one is enabled.
+/// This stops the watchdog, applies `config` to the clock system, and starts the `embassy-time`
+/// driver if one is enabled. On the FRAM parts it also releases the I/O from the low-power lock the
+/// chip boots into.
 ///
 /// Panics if called more than once.
 pub fn init(config: Config) -> Peripherals {
@@ -143,8 +194,10 @@ pub fn init(config: Config) -> Peripherals {
         let clocks = unsafe { clock::init(config.clock) };
         CLOCKS.borrow(cs).set(Some(clocks));
 
-        // The FRAM parts boot with every pin held in the high-impedance state it had in LPM4.
-        // Nothing written to a port register takes effect until LOCKLPM5 is cleared.
+        // The FRAM parts boot with every pin held in the high-impedance state it had in LPM4, and
+        // nothing written to a port register takes effect until LOCKLPM5 is cleared. The flash
+        // parts have no such lock.
+        #[cfg(feature = "msp430fr2355")]
         // SAFETY: single volatile write to PM5CTL0.
         unsafe { pac::Pmm::steal() }
             .pm5ctl0()

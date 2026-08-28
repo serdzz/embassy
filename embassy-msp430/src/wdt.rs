@@ -7,7 +7,7 @@
 //! without it resets the chip. That is why this module never does a read-modify-write on it and
 //! keeps the whole register value in software instead.
 
-use crate::pac;
+use crate::chip;
 
 /// Password that has to accompany every write to `WDTCTL`.
 const WDTPW: u16 = 0x5A00;
@@ -82,10 +82,8 @@ impl WdtInterval {
 
 #[inline]
 fn write_ctl(value: u16) {
-    // SAFETY: single volatile write of a fully-formed register value, password included.
-    unsafe { pac::WdtA::steal() }
-        .wdtctl()
-        .write(|w| unsafe { w.bits(WDTPW | value) });
+    // SAFETY: a single volatile write of a fully-formed register value, password included.
+    unsafe { (chip::WDTCTL as *mut u16).write_volatile(WDTPW | value) }
 }
 
 /// Stop the watchdog.
