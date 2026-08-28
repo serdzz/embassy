@@ -1,0 +1,175 @@
+#[doc = "Register `UCB1I2COA` reader"]
+pub type R = crate::R<Ucb1i2coaSpec>;
+#[doc = "Register `UCB1I2COA` writer"]
+pub type W = crate::W<Ucb1i2coaSpec>;
+#[doc = "Field `UCOA0` reader - I2C Own Address 0"]
+pub type Ucoa0R = crate::BitReader;
+#[doc = "Field `UCOA0` writer - I2C Own Address 0"]
+pub type Ucoa0W<'a, REG> = crate::BitWriter<'a, REG>;
+#[doc = "Field `UCOA1` reader - I2C Own Address 1"]
+pub type Ucoa1R = crate::BitReader;
+#[doc = "Field `UCOA1` writer - I2C Own Address 1"]
+pub type Ucoa1W<'a, REG> = crate::BitWriter<'a, REG>;
+#[doc = "Field `UCOA2` reader - I2C Own Address 2"]
+pub type Ucoa2R = crate::BitReader;
+#[doc = "Field `UCOA2` writer - I2C Own Address 2"]
+pub type Ucoa2W<'a, REG> = crate::BitWriter<'a, REG>;
+#[doc = "Field `UCOA3` reader - I2C Own Address 3"]
+pub type Ucoa3R = crate::BitReader;
+#[doc = "Field `UCOA3` writer - I2C Own Address 3"]
+pub type Ucoa3W<'a, REG> = crate::BitWriter<'a, REG>;
+#[doc = "Field `UCOA4` reader - I2C Own Address 4"]
+pub type Ucoa4R = crate::BitReader;
+#[doc = "Field `UCOA4` writer - I2C Own Address 4"]
+pub type Ucoa4W<'a, REG> = crate::BitWriter<'a, REG>;
+#[doc = "Field `UCOA5` reader - I2C Own Address 5"]
+pub type Ucoa5R = crate::BitReader;
+#[doc = "Field `UCOA5` writer - I2C Own Address 5"]
+pub type Ucoa5W<'a, REG> = crate::BitWriter<'a, REG>;
+#[doc = "Field `UCOA6` reader - I2C Own Address 6"]
+pub type Ucoa6R = crate::BitReader;
+#[doc = "Field `UCOA6` writer - I2C Own Address 6"]
+pub type Ucoa6W<'a, REG> = crate::BitWriter<'a, REG>;
+#[doc = "Field `UCOA7` reader - I2C Own Address 7"]
+pub type Ucoa7R = crate::BitReader;
+#[doc = "Field `UCOA7` writer - I2C Own Address 7"]
+pub type Ucoa7W<'a, REG> = crate::BitWriter<'a, REG>;
+#[doc = "Field `UCOA8` reader - I2C Own Address 8"]
+pub type Ucoa8R = crate::BitReader;
+#[doc = "Field `UCOA8` writer - I2C Own Address 8"]
+pub type Ucoa8W<'a, REG> = crate::BitWriter<'a, REG>;
+#[doc = "Field `UCOA9` reader - I2C Own Address 9"]
+pub type Ucoa9R = crate::BitReader;
+#[doc = "Field `UCOA9` writer - I2C Own Address 9"]
+pub type Ucoa9W<'a, REG> = crate::BitWriter<'a, REG>;
+#[doc = "Field `UCGCEN` reader - I2C General Call enable"]
+pub type UcgcenR = crate::BitReader;
+#[doc = "Field `UCGCEN` writer - I2C General Call enable"]
+pub type UcgcenW<'a, REG> = crate::BitWriter<'a, REG>;
+impl R {
+    #[doc = "Bit 0 - I2C Own Address 0"]
+    #[inline(always)]
+    pub fn ucoa0(&self) -> Ucoa0R {
+        Ucoa0R::new((self.bits & 1) != 0)
+    }
+    #[doc = "Bit 1 - I2C Own Address 1"]
+    #[inline(always)]
+    pub fn ucoa1(&self) -> Ucoa1R {
+        Ucoa1R::new(((self.bits >> 1) & 1) != 0)
+    }
+    #[doc = "Bit 2 - I2C Own Address 2"]
+    #[inline(always)]
+    pub fn ucoa2(&self) -> Ucoa2R {
+        Ucoa2R::new(((self.bits >> 2) & 1) != 0)
+    }
+    #[doc = "Bit 3 - I2C Own Address 3"]
+    #[inline(always)]
+    pub fn ucoa3(&self) -> Ucoa3R {
+        Ucoa3R::new(((self.bits >> 3) & 1) != 0)
+    }
+    #[doc = "Bit 4 - I2C Own Address 4"]
+    #[inline(always)]
+    pub fn ucoa4(&self) -> Ucoa4R {
+        Ucoa4R::new(((self.bits >> 4) & 1) != 0)
+    }
+    #[doc = "Bit 5 - I2C Own Address 5"]
+    #[inline(always)]
+    pub fn ucoa5(&self) -> Ucoa5R {
+        Ucoa5R::new(((self.bits >> 5) & 1) != 0)
+    }
+    #[doc = "Bit 6 - I2C Own Address 6"]
+    #[inline(always)]
+    pub fn ucoa6(&self) -> Ucoa6R {
+        Ucoa6R::new(((self.bits >> 6) & 1) != 0)
+    }
+    #[doc = "Bit 7 - I2C Own Address 7"]
+    #[inline(always)]
+    pub fn ucoa7(&self) -> Ucoa7R {
+        Ucoa7R::new(((self.bits >> 7) & 1) != 0)
+    }
+    #[doc = "Bit 8 - I2C Own Address 8"]
+    #[inline(always)]
+    pub fn ucoa8(&self) -> Ucoa8R {
+        Ucoa8R::new(((self.bits >> 8) & 1) != 0)
+    }
+    #[doc = "Bit 9 - I2C Own Address 9"]
+    #[inline(always)]
+    pub fn ucoa9(&self) -> Ucoa9R {
+        Ucoa9R::new(((self.bits >> 9) & 1) != 0)
+    }
+    #[doc = "Bit 15 - I2C General Call enable"]
+    #[inline(always)]
+    pub fn ucgcen(&self) -> UcgcenR {
+        UcgcenR::new(((self.bits >> 15) & 1) != 0)
+    }
+}
+impl W {
+    #[doc = "Bit 0 - I2C Own Address 0"]
+    #[inline(always)]
+    pub fn ucoa0(&mut self) -> Ucoa0W<'_, Ucb1i2coaSpec> {
+        Ucoa0W::new(self, 0)
+    }
+    #[doc = "Bit 1 - I2C Own Address 1"]
+    #[inline(always)]
+    pub fn ucoa1(&mut self) -> Ucoa1W<'_, Ucb1i2coaSpec> {
+        Ucoa1W::new(self, 1)
+    }
+    #[doc = "Bit 2 - I2C Own Address 2"]
+    #[inline(always)]
+    pub fn ucoa2(&mut self) -> Ucoa2W<'_, Ucb1i2coaSpec> {
+        Ucoa2W::new(self, 2)
+    }
+    #[doc = "Bit 3 - I2C Own Address 3"]
+    #[inline(always)]
+    pub fn ucoa3(&mut self) -> Ucoa3W<'_, Ucb1i2coaSpec> {
+        Ucoa3W::new(self, 3)
+    }
+    #[doc = "Bit 4 - I2C Own Address 4"]
+    #[inline(always)]
+    pub fn ucoa4(&mut self) -> Ucoa4W<'_, Ucb1i2coaSpec> {
+        Ucoa4W::new(self, 4)
+    }
+    #[doc = "Bit 5 - I2C Own Address 5"]
+    #[inline(always)]
+    pub fn ucoa5(&mut self) -> Ucoa5W<'_, Ucb1i2coaSpec> {
+        Ucoa5W::new(self, 5)
+    }
+    #[doc = "Bit 6 - I2C Own Address 6"]
+    #[inline(always)]
+    pub fn ucoa6(&mut self) -> Ucoa6W<'_, Ucb1i2coaSpec> {
+        Ucoa6W::new(self, 6)
+    }
+    #[doc = "Bit 7 - I2C Own Address 7"]
+    #[inline(always)]
+    pub fn ucoa7(&mut self) -> Ucoa7W<'_, Ucb1i2coaSpec> {
+        Ucoa7W::new(self, 7)
+    }
+    #[doc = "Bit 8 - I2C Own Address 8"]
+    #[inline(always)]
+    pub fn ucoa8(&mut self) -> Ucoa8W<'_, Ucb1i2coaSpec> {
+        Ucoa8W::new(self, 8)
+    }
+    #[doc = "Bit 9 - I2C Own Address 9"]
+    #[inline(always)]
+    pub fn ucoa9(&mut self) -> Ucoa9W<'_, Ucb1i2coaSpec> {
+        Ucoa9W::new(self, 9)
+    }
+    #[doc = "Bit 15 - I2C General Call enable"]
+    #[inline(always)]
+    pub fn ucgcen(&mut self) -> UcgcenW<'_, Ucb1i2coaSpec> {
+        UcgcenW::new(self, 15)
+    }
+}
+#[doc = "USCI B1 I2C Own Address\n\nYou can [`read`](crate::Reg::read) this register and get [`ucb1i2coa::R`](R). You can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`ucb1i2coa::W`](W). You can also [`modify`](crate::Reg::modify) this register. See [API](https://docs.rs/svd2rust/#read--modify--write-api)."]
+pub struct Ucb1i2coaSpec;
+impl crate::RegisterSpec for Ucb1i2coaSpec {
+    type Ux = u16;
+}
+#[doc = "`read()` method returns [`ucb1i2coa::R`](R) reader structure"]
+impl crate::Readable for Ucb1i2coaSpec {}
+#[doc = "`write(|w| ..)` method takes [`ucb1i2coa::W`](W) writer structure"]
+impl crate::Writable for Ucb1i2coaSpec {
+    type Safety = crate::Unsafe;
+}
+#[doc = "`reset()` method sets UCB1I2COA to value 0"]
+impl crate::Resettable for Ucb1i2coaSpec {}
