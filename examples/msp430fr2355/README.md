@@ -28,13 +28,27 @@ Examples for the [MSP-EXP430FR2355](https://www.ti.com/tool/MSP-EXP430FR2355) La
   `rust-lld` is not a substitute: it cannot relocate `R_MSP430_SYM_DIFF`, which `msp430-rt`'s
   prebuilt startup object uses.
 
-To flash and debug, [`mspdebug`](https://dlbeer.co.nz/mspdebug/) talks to the LaunchPad's on-board
-eZ-FET; `.cargo/config.toml` wires it up as the cargo runner.
+## Flashing
+
+[`mspdebug`](https://dlbeer.co.nz/mspdebug/) does the programming, wired up as the cargo runner in
+`.cargo/config.toml`:
 
 ```sh
 cargo build --release --bin blinky
-cargo run --release --bin blinky      # needs mspdebug
+cargo run --release --bin blinky
 ```
+
+It uses mspdebug's `tilib` driver, which talks to the probe through TI's `libmsp430` — that library
+ships with MSP430 GCC and with MSPDebugStack, and mspdebug loads it at run time. The driver matters:
+mspdebug's own device table (`mspdebug --fet-list`) has no FR2xx parts, so the `rf2500`, `ezfet` and
+`uif` drivers cannot identify this chip. `tilib` handles the LaunchPad's on-board eZ-FET and a
+separate MSP-FET or MSP-FET430UIF alike.
+
+For a bare chip on a MSP-FET430UIF's 14-pin header, Spy-Bi-Wire needs four connections: pin 7 to
+`TEST/SBWTCK`, pin 11 to `RST/SBWTDIO`, pin 9 to ground, and pin 2 if the probe is to power the
+board (`mspdebug -v 3300 tilib ...`) or pin 4 if the board powers itself. Four-wire JTAG uses TDO,
+TDI, TMS and TCK on pins 1, 3, 5 and 7 as well, and needs `-j`. An MSP-FET430UIF that has not seen a
+recent toolchain will want its firmware updated first; `--allow-fw-update` lets mspdebug do it.
 
 ## Waking up from sleep
 
