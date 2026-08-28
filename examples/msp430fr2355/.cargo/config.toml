@@ -4,6 +4,17 @@ rustflags = [
   "-C", "link-arg=-Tlink.x",
   "-C", "link-arg=-nostartfiles",
   "-C", "link-arg=-mcpu=msp430",
+  # The CPU cannot multiply or divide, so every `*` and `/` the compiler cannot fold becomes a call
+  # into libgcc, and rustc links a bare-metal target with -nodefaultlibs — so libgcc has to be asked
+  # for by name, or those calls come out as undefined symbols at the very end of the build.
+  #
+  # The multiply helpers live in a separate archive chosen by -mhwmult. `none` picks the software
+  # ones. The parts with a hardware multiplier would be faster with theirs, but it is a peripheral
+  # with shared registers: a multiply inside an interrupt handler corrupts one it interrupted, and
+  # the HAL does multiply inside handlers.
+  "-C", "link-arg=-mhwmult=none",
+  "-C", "link-arg=-lgcc",
+  "-C", "link-arg=-lmul_none",
 ]
 
 # Cargo appends the ELF path as the last argument and does not run this through a shell, so one is
