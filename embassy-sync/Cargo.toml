@@ -39,6 +39,9 @@ log = { version = "0.4.14", optional = true }
 futures-sink = { version = "0.3", default-features = false, features = [] }
 futures-core = { version = "0.3.31", default-features = false }
 critical-section = "1.1"
+# Targets without atomics (AVR, MSP430) get a critical-section based fallback; on every other
+# target this compiles down to the same `core::sync::atomic` types.
+portable-atomic = "1.5"
 heapless = "0.9"
 cfg-if = "1.0.0"
 embedded-io-async = { version = "0.7.0" }
