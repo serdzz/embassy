@@ -147,7 +147,7 @@ pub(crate) fn set_analog(pin: &impl SealedPin) {
     if chip::HAS_PULL {
         modify(port, REN, |v| v & !bit);
     }
-    chip::set_pin_function(port, bit, PinFunction::Alternate3);
+    chip::set_pin_function(port, bit, chip::ANALOG_FUNCTION);
 }
 
 /// Take the pin back from whatever peripheral had it.

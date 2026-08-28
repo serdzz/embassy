@@ -1,18 +1,17 @@
-//! Analog-to-digital converter.
+//! The F1xx converter: the ADC12.
 //!
-//! A single 12-bit SAR converter, shared by every channel, so [`Adc`] owns it and conversions are
-//! taken one at a time.
+//! Twelve bits, sixteen channels, one conversion at a time here.
 //!
 //! ```ignore
-//! let mut adc = Adc::new(p.ADC, adc::Config::default());
-//! let raw = adc.read(&mut p.P1_1).await;
+//! let mut adc = Adc::new(p.ADC12, adc::Config::default());
+//! let raw = adc.read(&mut p.P6_1).await;
 //! ```
 //!
 //! # Internal channels
 //!
-//! Channels above A11 are internal — the temperature sensor and the supply monitor — and their
-//! numbers differ between devices. [`Adc::read_channel`] takes a raw channel number for those;
-//! look it up in your device's datasheet.
+//! Above A7 the channels are internal rather than pins: the external reference inputs, the
+//! temperature sensor and half the supply. [`Channel`] names them, and [`Adc::read_channel`] takes
+//! a raw number for anything it does not.
 
 use core::future::poll_fn;
 use core::task::Poll;
@@ -21,57 +20,50 @@ use embassy_hal_internal::{Peri, PeripheralType};
 use embassy_sync::waitqueue::AtomicWaker;
 
 use crate::gpio::{self, Pin};
-use crate::{pac, peripherals};
+use crate::peripherals;
 
-const BASE: u16 = 0x0700;
+const BASE: u16 = 0x0080;
+
+// Register offsets from the base. The memory control registers are bytes; the rest are words.
+const MCTL0: u16 = 0x00;
+const MEM0: u16 = 0xc0;
+const CTL0: u16 = 0x120;
+const CTL1: u16 = 0x122;
+const IFG: u16 = 0x124;
+const IE: u16 = 0x126;
 
 // Control register 0.
-const ADCSC: u16 = 0x0001;
-const ADCENC: u16 = 0x0002;
-const ADCON: u16 = 0x0010;
-const ADCSHT_SHIFT: u16 = 8;
+const ADC12SC: u16 = 0x0001;
+const ENC: u16 = 0x0002;
+const ADC12ON: u16 = 0x0010;
+const REFON: u16 = 0x0020;
+const REF2_5V: u16 = 0x0040;
+const SHT0_SHIFT: u16 = 8;
 
 // Control register 1.
-const ADCSSEL_SHIFT: u16 = 3;
-const ADCDIV_SHIFT: u16 = 5;
-const ADCSHP: u16 = 0x0200;
+const ADC12SSEL_SHIFT: u16 = 3;
+const ADC12DIV_SHIFT: u16 = 5;
+const SHP: u16 = 0x0200;
 
-// Control register 2.
-const ADCRES_SHIFT: u16 = 4;
+// Memory control register.
+const SREF_SHIFT: u8 = 4;
 
-// Conversion memory control.
-const ADCSREF_SHIFT: u16 = 4;
-
-// Interrupt enable and flags.
-const ADCIE0: u16 = 0x0001;
-const ADCIFG0: u16 = 0x0001;
-
-// Register offsets from the peripheral base.
-const CTL0: u16 = 0x00;
-const CTL1: u16 = 0x02;
-const CTL2: u16 = 0x04;
-const MCTL0: u16 = 0x0a;
-const MEM0: u16 = 0x12;
-const IE: u16 = 0x1a;
-const IFG: u16 = 0x1c;
+// Interrupt flag and enable, for conversion memory 0.
+const IFG0: u16 = 0x0001;
+const IE0: u16 = 0x0001;
 
 static WAKER: AtomicWaker = AtomicWaker::new();
 
 #[inline]
-fn reg(offset: u16) -> *mut u16 {
-    (BASE + offset) as *mut u16
-}
-
-#[inline]
 fn read(offset: u16) -> u16 {
-    // SAFETY: a volatile read of an ADC register.
-    unsafe { reg(offset).read_volatile() }
+    // SAFETY: a volatile read of an ADC12 register.
+    unsafe { ((BASE + offset) as *mut u16).read_volatile() }
 }
 
 #[inline]
 fn write(offset: u16, value: u16) {
-    // SAFETY: a volatile write to an ADC register.
-    unsafe { reg(offset).write_volatile(value) }
+    // SAFETY: a volatile write to an ADC12 register.
+    unsafe { ((BASE + offset) as *mut u16).write_volatile(value) }
 }
 
 #[inline]
@@ -79,32 +71,10 @@ fn modify(offset: u16, f: impl FnOnce(u16) -> u16) {
     critical_section::with(|_| write(offset, f(read(offset))));
 }
 
-/// Conversion resolution.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Resolution {
-    /// 8 bits. The fastest conversion.
-    _8Bit,
-    /// 10 bits.
-    _10Bit,
-    /// 12 bits.
-    #[default]
-    _12Bit,
-}
-
-impl Resolution {
-    const fn bits(self) -> u16 {
-        self as u16
-    }
-
-    /// Largest value a conversion can produce.
-    pub const fn max_value(self) -> u16 {
-        match self {
-            Resolution::_8Bit => 0xFF,
-            Resolution::_10Bit => 0x3FF,
-            Resolution::_12Bit => 0xFFF,
-        }
-    }
+#[inline]
+fn write_mctl(value: u8) {
+    // SAFETY: a volatile write to the first conversion memory control register, which is a byte.
+    unsafe { ((BASE + MCTL0) as *mut u8).write_volatile(value) }
 }
 
 /// Voltage the conversion is measured against.
@@ -116,43 +86,30 @@ pub enum Reference {
     Vcc,
     /// Internal 1.5 V reference.
     Internal1V5,
-    /// Internal 2.0 V reference. Needs a supply above about 2.2 V.
-    Internal2V0,
-    /// Internal 2.5 V reference. Needs a supply above about 2.7 V.
+    /// Internal 2.5 V reference. Needs a supply above about 2.9 V.
     Internal2V5,
 }
 
 impl Reference {
-    /// `ADCSREF` field.
-    const fn sref(self) -> u16 {
+    /// `SREF` field: 0 measures against the supply, 1 against the reference generator.
+    const fn sref(self) -> u8 {
         match self {
             Reference::Vcc => 0,
             _ => 1,
         }
     }
 
-    /// `REFVSEL` field, for the references the PMM generates.
-    const fn refvsel(self) -> Option<u8> {
-        match self {
-            Reference::Vcc => None,
-            Reference::Internal1V5 => Some(0),
-            Reference::Internal2V0 => Some(1),
-            Reference::Internal2V5 => Some(2),
-        }
-    }
-
-    /// Nominal full-scale voltage in millivolts.
+    /// Nominal full-scale voltage in millivolts, where the chip knows it.
     pub const fn millivolts(self) -> Option<u16> {
         match self {
             Reference::Vcc => None,
             Reference::Internal1V5 => Some(1500),
-            Reference::Internal2V0 => Some(2000),
             Reference::Internal2V5 => Some(2500),
         }
     }
 }
 
-/// How long the input is sampled, in ADC clocks.
+/// How long the input is sampled, in converter clocks.
 ///
 /// The source's impedance decides how much is enough: the sampling capacitor has to charge through
 /// it. Longer is always safe, just slower.
@@ -191,27 +148,25 @@ impl SampleTime {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum AdcClock {
-    /// The dedicated MODCLK, about 5 MHz. Independent of how the rest of the system is clocked,
-    /// and it keeps the converter usable when MCLK is slow.
+    /// The converter's own oscillator, about 5 MHz. Independent of how the rest of the system is
+    /// clocked, which on this family means independent of an untrimmed DCO.
     #[default]
-    Modclk,
+    Internal,
     /// ACLK.
     Aclk,
+    /// MCLK.
+    Mclk,
     /// SMCLK.
     Smclk,
 }
 
 impl AdcClock {
     const fn bits(self) -> u16 {
-        match self {
-            AdcClock::Modclk => 0,
-            AdcClock::Aclk => 1,
-            AdcClock::Smclk => 2,
-        }
+        self as u16
     }
 }
 
-/// Divider applied to the ADC clock.
+/// Divider applied to the converter clock.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ClockDiv {
@@ -240,13 +195,11 @@ impl ClockDiv {
     }
 }
 
-/// ADC configuration.
+/// ADC12 configuration.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[non_exhaustive]
 pub struct Config {
-    /// Conversion resolution.
-    pub resolution: Resolution,
     /// Voltage the conversion is measured against.
     pub reference: Reference,
     /// How long the input is sampled.
@@ -257,11 +210,37 @@ pub struct Config {
     pub clock_div: ClockDiv,
 }
 
+/// The channels that are not pins.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum Channel {
+    /// The external positive reference input.
+    VeRefPlus,
+    /// The external negative reference input.
+    VeRefMinus,
+    /// The on-chip temperature sensor.
+    Temperature,
+    /// Half the supply voltage, for monitoring a battery.
+    HalfVcc,
+}
+
+impl Channel {
+    /// Raw `INCH` value.
+    pub const fn channel(self) -> u8 {
+        match self {
+            Channel::VeRefPlus => 8,
+            Channel::VeRefMinus => 9,
+            Channel::Temperature => 10,
+            Channel::HalfVcc => 11,
+        }
+    }
+}
+
 pub(crate) trait SealedAdcChannel {
     fn channel(&self) -> u8;
 }
 
-/// A pin that is wired to an ADC channel.
+/// A pin that is wired to a converter channel.
 #[allow(private_bounds)]
 pub trait AdcChannel: SealedAdcChannel + Pin + PeripheralType {}
 
@@ -276,63 +255,58 @@ macro_rules! impl_channel {
     };
 }
 
-impl_channel!(P1_0, 0);
-impl_channel!(P1_1, 1);
-impl_channel!(P1_2, 2);
-impl_channel!(P1_3, 3);
-impl_channel!(P1_4, 4);
-impl_channel!(P1_5, 5);
-impl_channel!(P1_6, 6);
-impl_channel!(P1_7, 7);
-impl_channel!(P5_0, 8);
-impl_channel!(P5_1, 9);
-impl_channel!(P5_2, 10);
-impl_channel!(P5_3, 11);
+// A0 through A7 are P6.0 through P6.7.
+impl_channel!(P6_0, 0);
+impl_channel!(P6_1, 1);
+impl_channel!(P6_2, 2);
+impl_channel!(P6_3, 3);
+impl_channel!(P6_4, 4);
+impl_channel!(P6_5, 5);
+impl_channel!(P6_6, 6);
+impl_channel!(P6_7, 7);
+
+/// Largest value a conversion can produce.
+pub const MAX_VALUE: u16 = 0x0FFF;
 
 /// The analog-to-digital converter.
 pub struct Adc<'d> {
-    _peri: Peri<'d, peripherals::ADC>,
-    resolution: Resolution,
+    _peri: Peri<'d, peripherals::ADC12>,
     reference: Reference,
 }
 
 impl<'d> Adc<'d> {
     /// Turn the converter on and apply `config`.
     ///
-    /// If `config` asks for an internal reference, this waits for the reference generator to
-    /// settle, which takes a few tens of microseconds.
-    pub fn new(peri: Peri<'d, peripherals::ADC>, config: Config) -> Self {
-        if let Some(refvsel) = config.reference.refvsel() {
-            let pmm = unsafe { pac::Pmm::steal() };
-            pmm.pmmctl2().modify(|_, w| unsafe {
-                w.intrefen().set_bit();
-                w.refvsel().bits(refvsel)
-            });
-            // The generator needs a moment before a conversion against it means anything.
-            while pmm.pmmctl2().read().refgenrdy().bit_is_clear() {}
-        }
-
-        // ADCENC has to be clear while the control registers are written.
+    /// If `config` asks for the internal reference, this waits for the generator to settle. There
+    /// is no ready flag for that on this converter, so the wait is a timed one, worked out from
+    /// MCLK — which on this family is an untrimmed DCO, so give it room by telling
+    /// [`crate::clock`] what the DCO really runs at.
+    pub fn new(peri: Peri<'d, peripherals::ADC12>, config: Config) -> Self {
+        // ENC has to be clear while the control registers are written.
         write(CTL0, 0);
         write(
             CTL1,
-            ADCSHP | (config.clock.bits() << ADCSSEL_SHIFT) | (config.clock_div.bits() << ADCDIV_SHIFT),
+            SHP | (config.clock.bits() << ADC12SSEL_SHIFT) | (config.clock_div.bits() << ADC12DIV_SHIFT),
         );
-        write(CTL2, config.resolution.bits() << ADCRES_SHIFT);
-        write(CTL0, (config.sample_time.bits() << ADCSHT_SHIFT) | ADCON);
+
+        let mut ctl0 = (config.sample_time.bits() << SHT0_SHIFT) | ADC12ON;
+        match config.reference {
+            Reference::Vcc => {}
+            Reference::Internal1V5 => ctl0 |= REFON,
+            Reference::Internal2V5 => ctl0 |= REFON | REF2_5V,
+        }
+        write(CTL0, ctl0);
         write(IE, 0);
         write(IFG, 0);
 
+        if config.reference != Reference::Vcc {
+            settle_reference();
+        }
+
         Self {
             _peri: peri,
-            resolution: config.resolution,
             reference: config.reference,
         }
-    }
-
-    /// Resolution the converter was configured for.
-    pub fn resolution(&self) -> Resolution {
-        self.resolution
     }
 
     /// Reference the converter was configured for.
@@ -344,30 +318,25 @@ impl<'d> Adc<'d> {
     ///
     /// Returns `None` for [`Reference::Vcc`], whose voltage the chip has no way of knowing.
     pub fn to_millivolts(&self, raw: u16) -> Option<u16> {
-        let full_scale = self.reference.millivolts()?;
-        let max = self.resolution.max_value() as u32;
-        Some(((raw as u32 * full_scale as u32) / max) as u16)
+        let full_scale = self.reference.millivolts()? as u32;
+        Some(((raw as u32 * full_scale) / MAX_VALUE as u32) as u16)
     }
 
     /// Point the converter at `channel` and start a conversion.
     fn start(&mut self, channel: u8) {
-        // MCTL0 can only be written while ADCENC is clear.
-        modify(CTL0, |v| v & !ADCENC);
-        write(
-            MCTL0,
-            (channel as u16 & 0x0f) | (self.reference.sref() << ADCSREF_SHIFT),
-        );
+        // The conversion memory control register can only be written while ENC is clear.
+        modify(CTL0, |v| v & !ENC);
+        write_mctl((channel & 0x0f) | (self.reference.sref() << SREF_SHIFT));
         write(IFG, 0);
-        modify(CTL0, |v| v | ADCENC | ADCSC);
+        modify(CTL0, |v| v | ENC | ADC12SC);
     }
 
     /// Take one conversion from `channel`, spinning.
     ///
-    /// The channel number is the raw `ADCINCH` value, which lets you reach the internal channels
-    /// that have no pin.
+    /// The channel number is the raw `INCH` value; [`Channel`] names the ones that are not pins.
     pub fn blocking_read_channel(&mut self, channel: u8) -> u16 {
         self.start(channel);
-        while read(IFG) & ADCIFG0 == 0 {}
+        while read(IFG) & IFG0 == 0 {}
         // Reading the result clears the flag.
         read(MEM0)
     }
@@ -378,13 +347,13 @@ impl<'d> Adc<'d> {
 
         poll_fn(|cx| {
             critical_section::with(|_| {
-                if read(IFG) & ADCIFG0 != 0 {
+                if read(IFG) & IFG0 != 0 {
                     Poll::Ready(())
                 } else {
                     // Register before unmasking: the handler cannot run until this critical
                     // section ends, so the wakeup cannot be missed.
                     WAKER.register(cx.waker());
-                    modify(IE, |v| v | ADCIE0);
+                    modify(IE, |v| v | IE0);
                     Poll::Pending
                 }
             })
@@ -409,25 +378,33 @@ impl<'d> Adc<'d> {
     }
 }
 
+/// Give the reference generator its settling time, about 20 µs.
+///
+/// The loop is four instructions or so per iteration; the exact figure does not matter as long as
+/// it errs long, and it does.
+fn settle_reference() {
+    let mclk = crate::clocks().map_or(1_000_000, |c| c.mclk);
+    let iterations = (mclk / 50_000).max(1);
+    for _ in 0..iterations {
+        msp430::asm::nop();
+    }
+}
+
 impl<'d> Drop for Adc<'d> {
     fn drop(&mut self) {
-        modify(IE, |v| v & !ADCIE0);
-        // Clearing ADCON powers the analog block down; it is the bulk of what the ADC costs.
-        modify(CTL0, |v| v & !(ADCENC | ADCON));
-
-        if self.reference.refvsel().is_some() {
-            let pmm = unsafe { pac::Pmm::steal() };
-            pmm.pmmctl2().modify(|_, w| w.intrefen().clear_bit());
-        }
+        modify(IE, |v| v & !IE0);
+        // Clearing ADC12ON and REFON powers the analog blocks down; between them they are the bulk
+        // of what the converter costs.
+        modify(CTL0, |v| v & !(ENC | ADC12ON | REFON));
     }
 }
 
 embassy_executor::msp430_interrupt! {
     /// Conversion complete.
-    unsafe fn ADC() {
+    unsafe fn ADC12() {
         // The flag is cleared by reading MEM0, which is the task's job. Masking instead both
         // silences the interrupt and leaves the flag as the "is it done" answer.
-        modify(IE, |v| v & !ADCIE0);
+        modify(IE, |v| v & !IE0);
         WAKER.wake();
     }
 }

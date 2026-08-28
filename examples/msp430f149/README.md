@@ -2,16 +2,18 @@
 
 Examples for the MSP430F149, on `embassy-executor`'s `platform-msp430`.
 
-| Example  | What it does                                            |
-|----------|---------------------------------------------------------|
-| `blinky` | Two LEDs blinking at different rates from two tasks.     |
-| `button` | Awaits a port interrupt from the key and toggles an LED. |
+| Example  | What it does                                                    |
+|----------|-----------------------------------------------------------------|
+| `blinky` | Two LEDs blinking at different rates from two tasks.             |
+| `button` | Awaits a port interrupt from the key and toggles an LED.         |
+| `uart`   | Echoes characters over USART0 at 9600 baud while an LED blinks.  |
 
 These use `embassy-msp430` with its `msp430f149` feature. The F1xx family shares little with the
 FR2xx parts below the CPU — BCS+ instead of the CS module, USARTs instead of eUSCIs, the ADC12, and
-byte-spaced ports low in the address map rather than pairs of 8-bit halves at 0x0200 — so only the
-drivers that genuinely carry over are available here: GPIO, the time driver, the clock system and
-the watchdog.
+byte-spaced ports low in the address map rather than pairs of 8-bit halves at 0x0200 — so the
+drivers behind the shared API are different code. GPIO, the time driver, the clock system, the
+watchdog, UART, SPI, PWM and the ADC are all available; I2C and an RTC are not, because this device
+has neither in hardware.
 
 ## The PAC
 

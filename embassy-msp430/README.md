@@ -23,22 +23,27 @@ kept in `src/chip/`; adding a device is a file there plus a feature.
 
 ## Peripherals
 
-| Peripheral        | FR2355 | F149 | Async |
-|-------------------|--------|------|-------|
-| GPIO              | yes    | yes  | edge wait, on the ports that can interrupt |
-| Time driver (Timer_B) | yes | yes | `embassy-time` |
-| Clock system      | CS, with the FLL | BCS+ | - |
-| Watchdog          | yes    | yes  | - |
-| UART              | eUSCI_A | -   | yes |
-| SPI master        | eUSCI_A/B | - | yes |
-| I2C master        | eUSCI_B | -   | yes |
-| ADC               | yes    | -    | yes |
-| PWM (Timer_B)     | yes    | -    | - |
-| RTC               | yes    | -    | yes |
+| Peripheral   | FR2355     | F149        | Async |
+|--------------|------------|-------------|-------|
+| GPIO         | yes        | yes         | edge wait, on the ports that can interrupt |
+| Time driver  | Timer_B0   | Timer_B7    | `embassy-time` |
+| Clock system | CS, with the FLL | BCS+  | - |
+| Watchdog     | yes        | yes         | - |
+| UART         | eUSCI_A    | USART       | yes |
+| SPI master   | eUSCI_A/B  | USART       | yes |
+| PWM          | Timer_B    | Timer_A/B   | - |
+| ADC          | yes        | ADC12       | yes |
+| I2C master   | eUSCI_B    | **no hardware** | yes |
+| RTC          | yes        | **no hardware** | yes |
 
-The F149's USARTs and ADC12 have nothing in common with the FR2xx eUSCI and ADC beyond the job they
-do, so they need drivers of their own rather than a widened version of these; they are not written
-yet.
+The last two are not omissions: the F149's USART does UART and SPI only — I2C arrived on this family
+with the F15x/16x — and the device has no real-time clock at all. Bit-banging I2C on two GPIOs is the
+usual answer there, and belongs in a driver crate rather than here.
+
+Where a driver exists for both, the API is the same and only the implementation differs, so moving
+code between the families is mostly a matter of renaming pins. The ADC is the exception: the FR2xx
+converter has selectable resolution and three internal references, the ADC12 is twelve bits with
+two, so its configuration genuinely differs and `adc::Config` is not portable between them.
 
 Two differences the GPIO driver surfaces rather than papers over: F1xx has no pull resistors at all,
 so asking for one panics instead of quietly doing nothing, and it has interrupts on P1 and P2 only

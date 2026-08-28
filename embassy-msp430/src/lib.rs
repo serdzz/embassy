@@ -34,20 +34,18 @@ pub mod wdt;
 
 // The FR2xx serial and analog peripherals share nothing with the F1xx ones below the pin, so these
 // are for now only available on the family they were written against.
-#[cfg(feature = "msp430fr2355")]
 pub mod adc;
 #[cfg(feature = "msp430fr2355")]
 pub(crate) mod eusci;
 #[cfg(feature = "msp430fr2355")]
 pub mod i2c;
-#[cfg(feature = "msp430fr2355")]
 pub mod pwm;
 #[cfg(feature = "msp430fr2355")]
 pub mod rtc;
-#[cfg(feature = "msp430fr2355")]
 pub mod spi;
-#[cfg(feature = "msp430fr2355")]
 pub mod uart;
+#[cfg(feature = "msp430f149")]
+pub(crate) mod usart;
 
 #[cfg(feature = "_time-driver")]
 mod time_driver;

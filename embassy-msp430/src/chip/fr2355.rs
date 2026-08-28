@@ -18,6 +18,9 @@ pub(crate) const TB0_IV: u16 = TB0_BASE + 0x2e;
 /// flag in a single read.
 pub(crate) const HAS_PORT_IV: bool = true;
 
+/// The analog function, which also disconnects the digital input buffer.
+pub(crate) const ANALOG_FUNCTION: PinFunction = PinFunction::Alternate3;
+
 /// `WDTCTL`.
 pub(crate) const WDTCTL: u16 = 0x01cc;
 

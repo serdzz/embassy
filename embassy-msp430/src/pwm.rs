@@ -61,14 +61,19 @@ pub struct Config {
 pub enum ConfigError {
     /// The dividers cannot stretch or shrink the clock this far. Too low a frequency overflows the
     /// 16-bit counter even at the largest divider; too high a one leaves fewer than two counts per
-    /// period, which is not a duty cycle any more.
+    /// period, which is not a duty cycle any more. A timer without the expansion divider runs out
+    /// of range eight times sooner.
     UnachievableFrequency,
     /// [`crate::init`] has not run, so the clock frequencies are unknown.
     ClocksNotInitialized,
 }
 
 trait SealedInstance {
+    /// Address of the control register.
     const BASE: u16;
+    /// Whether the timer has the expansion divider, `TxIDEX`. Timer_B has it; the F1xx Timer_A
+    /// does not, which limits how far its period can be stretched.
+    const HAS_IDEX: bool;
 }
 
 /// A Timer_B block usable for PWM.
@@ -96,10 +101,11 @@ pub(crate) trait SealedPwmPin<T> {
 pub trait PwmPin<T: Instance>: SealedPwmPin<T> + Pin + PeripheralType {}
 
 macro_rules! impl_instance {
-    ($(#[$cfg:meta])? $peri:ident, $base:expr) => {
+    ($(#[$cfg:meta])? $peri:ident, $base:expr, $has_idex:expr) => {
         $(#[$cfg])?
         impl SealedInstance for peripherals::$peri {
             const BASE: u16 = $base;
+            const HAS_IDEX: bool = $has_idex;
         }
         $(#[$cfg])?
         impl Instance for peripherals::$peri {}
@@ -118,40 +124,107 @@ macro_rules! impl_pin {
     };
 }
 
-// TB0 is only a peripheral of its own when it is not the `embassy-time` driver.
-impl_instance!(
-    #[cfg(not(feature = "time-driver-tb0"))]
-    TB0,
-    0x0380
-);
-impl_instance!(TB1, 0x03c0);
-impl_instance!(TB2, 0x0400);
-impl_instance!(TB3, 0x0440);
+// The `embassy-time` driver's timer is only a peripheral of its own when it is not being used as
+// the driver.
+#[cfg(feature = "msp430fr2355")]
+mod instances {
+    use super::*;
 
-impl_pin!(
-    #[cfg(not(feature = "time-driver-tb0"))]
-    TB0,
-    P1_6,
-    1,
-    Alt::Two
-);
-impl_pin!(
-    #[cfg(not(feature = "time-driver-tb0"))]
-    TB0,
-    P1_7,
-    2,
-    Alt::Two
-);
-impl_pin!(TB1, P2_0, 1, Alt::One);
-impl_pin!(TB1, P2_1, 2, Alt::One);
-impl_pin!(TB2, P5_0, 1, Alt::One);
-impl_pin!(TB2, P5_1, 2, Alt::One);
-impl_pin!(TB3, P6_0, 1, Alt::One);
-impl_pin!(TB3, P6_1, 2, Alt::One);
-impl_pin!(TB3, P6_2, 3, Alt::One);
-impl_pin!(TB3, P6_3, 4, Alt::One);
-impl_pin!(TB3, P6_4, 5, Alt::One);
-impl_pin!(TB3, P6_5, 6, Alt::One);
+    impl_instance!(
+        #[cfg(not(feature = "time-driver-tb0"))]
+        TB0,
+        0x0380,
+        true
+    );
+    impl_instance!(TB1, 0x03c0, true);
+    impl_instance!(TB2, 0x0400, true);
+    impl_instance!(TB3, 0x0440, true);
+
+    impl_pin!(
+        #[cfg(not(feature = "time-driver-tb0"))]
+        TB0,
+        P1_6,
+        1,
+        Alt::Two
+    );
+    impl_pin!(
+        #[cfg(not(feature = "time-driver-tb0"))]
+        TB0,
+        P1_7,
+        2,
+        Alt::Two
+    );
+    impl_pin!(TB1, P2_0, 1, Alt::One);
+    impl_pin!(TB1, P2_1, 2, Alt::One);
+    impl_pin!(TB2, P5_0, 1, Alt::One);
+    impl_pin!(TB2, P5_1, 2, Alt::One);
+    impl_pin!(TB3, P6_0, 1, Alt::One);
+    impl_pin!(TB3, P6_1, 2, Alt::One);
+    impl_pin!(TB3, P6_2, 3, Alt::One);
+    impl_pin!(TB3, P6_3, 4, Alt::One);
+    impl_pin!(TB3, P6_4, 5, Alt::One);
+    impl_pin!(TB3, P6_5, 6, Alt::One);
+}
+
+#[cfg(feature = "msp430f149")]
+mod instances {
+    use super::*;
+
+    // Timer_B7's outputs are on P4; Timer_A3's are on P1. CCR0 sets the period in up mode, so the
+    // channel that would drive P4.0 or P1.1 is not a PWM output.
+    impl_instance!(
+        #[cfg(not(feature = "time-driver-tb0"))]
+        TB0,
+        0x0180,
+        true
+    );
+    impl_instance!(TA0, 0x0160, false);
+
+    impl_pin!(
+        #[cfg(not(feature = "time-driver-tb0"))]
+        TB0,
+        P4_1,
+        1,
+        Alt::One
+    );
+    impl_pin!(
+        #[cfg(not(feature = "time-driver-tb0"))]
+        TB0,
+        P4_2,
+        2,
+        Alt::One
+    );
+    impl_pin!(
+        #[cfg(not(feature = "time-driver-tb0"))]
+        TB0,
+        P4_3,
+        3,
+        Alt::One
+    );
+    impl_pin!(
+        #[cfg(not(feature = "time-driver-tb0"))]
+        TB0,
+        P4_4,
+        4,
+        Alt::One
+    );
+    impl_pin!(
+        #[cfg(not(feature = "time-driver-tb0"))]
+        TB0,
+        P4_5,
+        5,
+        Alt::One
+    );
+    impl_pin!(
+        #[cfg(not(feature = "time-driver-tb0"))]
+        TB0,
+        P4_6,
+        6,
+        Alt::One
+    );
+    impl_pin!(TA0, P1_2, 1, Alt::One);
+    impl_pin!(TA0, P1_3, 2, Alt::One);
+}
 
 #[inline]
 fn reg(base: u16, offset: u16) -> *mut u16 {
@@ -168,9 +241,10 @@ fn write(base: u16, offset: u16, value: u16) {
 ///
 /// Smaller is better: the period in counts is the duty resolution, so dividing less leaves finer
 /// steps. Returns `(ID exponent, TBIDEX, period in counts)`.
-fn find_divider(clock: u32, freq: u32) -> Option<(u16, u32, u32)> {
+fn find_divider(clock: u32, freq: u32, has_idex: bool) -> Option<(u16, u32, u32)> {
+    let max_ex = if has_idex { MAX_EX } else { 1 };
     for id_pow in 0..4u16 {
-        for ex in 1..=MAX_EX {
+        for ex in 1..=max_ex {
             let div = (1u32 << id_pow) * ex;
             let period = clock / (div * freq);
             if (2..=65536).contains(&period) {
@@ -201,11 +275,14 @@ impl<'d, T: Instance> Pwm<'d, T> {
             PeripheralClock::Aclk => (TBSSEL_ACLK, clocks.aclk),
         };
 
-        let (id_pow, ex, period) = find_divider(source_hz, frequency).ok_or(ConfigError::UnachievableFrequency)?;
+        let (id_pow, ex, period) =
+            find_divider(source_hz, frequency, T::HAS_IDEX).ok_or(ConfigError::UnachievableFrequency)?;
 
         // Stop and clear before reprogramming, so the first period is a whole one.
         write(T::BASE, CTL, MC_STOP | TBCLR);
-        write(T::BASE, EX0, (ex - 1) as u16);
+        if T::HAS_IDEX {
+            write(T::BASE, EX0, (ex - 1) as u16);
+        }
         // In up mode the counter runs 0..=CCR0, so a period of `period` counts needs CCR0 one less.
         write(T::BASE, CCR0, (period - 1) as u16);
         write(T::BASE, CTL, source_bits | (id_pow << ID_SHIFT) | MC_UP | TBCLR);

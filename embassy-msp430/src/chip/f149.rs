@@ -17,6 +17,9 @@ pub(crate) const TB0_IV: u16 = 0x011e;
 /// F1xx has no per-port vector register; the handler reads `PxIFG` and clears it itself.
 pub(crate) const HAS_PORT_IV: bool = false;
 
+/// F1xx has one select bit, so the converter shares it with everything else on the pin.
+pub(crate) const ANALOG_FUNCTION: PinFunction = PinFunction::Alternate1;
+
 /// `WDTCTL`.
 pub(crate) const WDTCTL: u16 = 0x0120;
 
