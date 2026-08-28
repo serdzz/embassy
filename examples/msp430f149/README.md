@@ -7,28 +7,29 @@ Examples for the MSP430F149, on `embassy-executor`'s `platform-msp430`.
 | `blinky` | Two LEDs blinking at different rates from two tasks.     |
 | `button` | Awaits a port interrupt from the key and toggles an LED. |
 
-These do **not** use `embassy-msp430`. The F1xx family is a generation older than the FR2xx parts
-that HAL targets and shares almost nothing with them below the CPU: BCS+ instead of the CS module,
-USARTs instead of eUSCIs, the ADC12, and byte-spaced ports low in the address map rather than pairs
-of 8-bit halves at 0x0200. So the examples drive the peripheral access crate directly, and what they
-share with the FR2355 ones is the executor and the shape of the time driver.
+These use `embassy-msp430` with its `msp430f149` feature. The F1xx family shares little with the
+FR2xx parts below the CPU — BCS+ instead of the CS module, USARTs instead of eUSCIs, the ADC12, and
+byte-spaced ports low in the address map rather than pairs of 8-bit halves at 0x0200 — so only the
+drivers that genuinely carry over are available here: GPIO, the time driver, the clock system and
+the watchdog.
 
 ## The PAC
 
-There is no `msp430f149` crate on crates.io, so one is vendored in `msp430f149-pac/`. It is
-generated — see its README for how to reproduce it — and would be better off published on its own
-than living here.
+There is no `msp430f149` crate on crates.io, so one is generated and vendored at the repository
+root, in `msp430f149-pac/`. See its README for how to reproduce it; it would be better off published
+on its own than living here.
 
 ## Board
 
-F149 boards are not standardised the way a LaunchPad is. `src/board.rs` assumes the common "minimum
-system" layout — LEDs on P1.0 and P1.1, a key on P1.4 — and it is the first thing to check against
+F149 boards are not standardised the way a LaunchPad is. The examples assume the common "minimum
+system" layout — LEDs on P1.0 and P1.1, a key on P1.4 — and that is the first thing to check against
 your own schematic.
 
 Two things the F1xx will catch you out on:
 
 - **The ports have no pull resistors.** Those arrived with the F2xx family, so the key needs an
-  external pull-up. There is nothing to enable in software.
+  external pull-up, and `Input::new` is asked for `Pull::None`. Asking for a pull on this family
+  panics rather than quietly doing nothing.
 - **ACLK comes from the LFXT1 crystal, and there is no internal low-frequency oscillator.** The time
   driver counts ACLK, so the board needs its 32768 Hz watch crystal fitted or nothing will tick. A
   watch crystal also takes up to a second to start, so time runs slow for a moment after reset.
