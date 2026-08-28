@@ -1,0 +1,65 @@
+[package]
+name = "embassy-msp430"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Embassy Hardware Abstraction Layer (HAL) for TI MSP430 microcontrollers"
+repository = "https://github.com/embassy-rs/embassy"
+documentation = "https://docs.embassy.dev/embassy-msp430"
+categories = [
+    "embedded",
+    "no-std",
+    "asynchronous",
+    "hardware-support",
+]
+
+[package.metadata.embassy]
+build = [
+    {group = "nightly", target = "msp430-none-elf", features = ["msp430fr2355", "defmt"], build-std = ["core"]},
+    {group = "nightly", target = "msp430-none-elf", features = ["msp430fr2355", "time-driver-tb0"], build-std = ["core"]},
+]
+
+[dependencies]
+embassy-executor = { version = "0.10.0", path = "../embassy-executor", features = ["platform-msp430"] }
+embassy-hal-internal = { version = "0.5.0", path = "../embassy-hal-internal" }
+embassy-sync = { version = "0.8.0", path = "../embassy-sync" }
+embassy-time-driver = { version = "0.2.2", path = "../embassy-time-driver", optional = true }
+embassy-time-queue-utils = { version = "0.3.0", path = "../embassy-time-queue-utils", optional = true }
+
+embedded-hal = "1.0"
+embedded-hal-async = "1.0"
+embedded-io = "0.7.0"
+embedded-io-async = "0.7.0"
+
+critical-section = "1.1"
+msp430 = { version = "0.4.1", features = ["critical-section-single-core"] }
+msp430-rt = "0.4.1"
+
+defmt = { version = "1.0.1", optional = true }
+log = { version = "0.4.14", optional = true }
+document-features = "0.2.7"
+
+# Chip support
+msp430fr2355-pac = { package = "msp430fr2355", version = "0.6.1", features = ["rt", "critical-section"], optional = true }
+
+[features]
+default = []
+
+#! ### Chip selection
+#! Exactly one chip feature must be enabled.
+
+## MSP430FR2355: 32 kB FRAM, 4 kB SRAM.
+msp430fr2355 = ["dep:msp430fr2355-pac"]
+
+#! ### Time driver
+
+## Use Timer_B0 as the `embassy-time` driver. Ticks at 32768 Hz off ACLK, and keeps running in LPM3.
+time-driver-tb0 = ["_time-driver", "embassy-time-driver/tick-hz-32_768"]
+_time-driver = ["dep:embassy-time-driver", "dep:embassy-time-queue-utils"]
+
+#! ### Logging
+
+## Enable defmt logging
+defmt = ["dep:defmt", "embassy-hal-internal/defmt", "embassy-sync/defmt"]
+## Enable log logging
+log = ["dep:log"]
