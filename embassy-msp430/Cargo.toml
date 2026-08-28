@@ -18,6 +18,7 @@ build = [
     {group = "nightly", target = "msp430-none-elf", features = ["msp430fr2355", "defmt"], build-std = ["core"]},
     {group = "nightly", target = "msp430-none-elf", features = ["msp430fr2355", "time-driver-tb0"], build-std = ["core"]},
     {group = "nightly", target = "msp430-none-elf", features = ["msp430f149", "time-driver-tb0"], build-std = ["core"]},
+    {group = "nightly", target = "msp430-none-elf", features = ["msp430f2618", "time-driver-tb0"], build-std = ["core"]},
 ]
 
 [dependencies]
@@ -44,6 +45,7 @@ document-features = "0.2.7"
 msp430fr2355-pac = { package = "msp430fr2355", version = "0.6.1", features = ["rt", "critical-section"], optional = true }
 # Not on crates.io; generated and vendored at the repository root.
 msp430f149-pac = { package = "msp430f149", version = "0.1.0", path = "../msp430f149-pac", features = ["rt", "critical-section"], optional = true }
+msp430f2618-pac = { package = "msp430f2618", version = "0.1.0", path = "../msp430f2618-pac", features = ["rt", "critical-section"], optional = true }
 
 [features]
 default = []
@@ -60,6 +62,13 @@ msp430fr2355 = ["dep:msp430fr2355-pac"]
 ## genuinely carry over are available: GPIO, the time driver, the clock system and the watchdog.
 ## Its USARTs and ADC12 have no drivers here yet.
 msp430f149 = ["dep:msp430f149-pac"]
+
+## MSP430F2618: 116 kB flash, 8 kB SRAM — but only about 51 kB of that flash is reachable, since
+## the rest needs the 20-bit addressing that Rust's msp430 target does not have.
+##
+## GPIO, the time driver, the clock system and the watchdog are available. Its USCI serial
+## peripherals and ADC12 do not have drivers here yet.
+msp430f2618 = ["dep:msp430f2618-pac"]
 
 #! ### Time driver
 

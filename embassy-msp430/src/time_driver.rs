@@ -213,7 +213,7 @@ embassy_executor::msp430_interrupt! {
     }
 }
 
-#[cfg(feature = "msp430f149")]
+#[cfg(any(feature = "msp430f149", feature = "msp430f2618"))]
 embassy_executor::msp430_interrupt! {
     /// CCR0 compare match: an `embassy-time` alarm came due.
     unsafe fn TIMERB0() {
