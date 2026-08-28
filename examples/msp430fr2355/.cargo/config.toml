@@ -1,0 +1,15 @@
+[target.msp430-none-elf]
+# The linker is msp430-elf-gcc (the target default), so linker arguments are gcc arguments.
+rustflags = [
+  "-C", "link-arg=-Tlink.x",
+  "-C", "link-arg=-nostartfiles",
+  "-C", "link-arg=-mcpu=msp430",
+]
+runner = "mspdebug -q tilib --force-reset 'prog $0' gdb"
+
+[build]
+target = "msp430-none-elf"
+
+[unstable]
+# msp430-none-elf is a tier 3 target: rustup has no prebuilt `core` for it.
+build-std = ["core"]

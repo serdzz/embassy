@@ -1,0 +1,5 @@
+[toolchain]
+# MSP430 needs a nightly compiler: `build-std` for `core`, plus the `abi_msp430_interrupt` and
+# `asm_experimental_arch` features.
+channel = "nightly"
+components = ["rust-src", "llvm-tools"]
