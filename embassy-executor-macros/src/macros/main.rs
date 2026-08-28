@@ -25,6 +25,12 @@ pub static ARCH_AVR: Arch = Arch {
     executor_required: false,
 };
 
+pub static ARCH_MSP430: Arch = Arch {
+    default_entry: Some("msp430_rt::entry"),
+    flavor: Flavor::Standard,
+    executor_required: false,
+};
+
 pub static ARCH_RISCV: Arch = Arch {
     default_entry: Some("riscv_rt::entry"),
     flavor: Flavor::Standard,

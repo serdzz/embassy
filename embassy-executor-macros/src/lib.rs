@@ -47,6 +47,33 @@ pub fn main_avr(args: TokenStream, item: TokenStream) -> TokenStream {
     main::run(args.into(), item.into(), &main::ARCH_AVR).into()
 }
 
+/// Creates a new `executor` instance and declares an application entry point for MSP430 spawning
+/// the corresponding function body as an async task.
+///
+/// The following restrictions apply:
+///
+/// * The function must accept exactly 1 parameter, an `embassy_executor::Spawner` handle that it can use to spawn additional tasks.
+/// * The function must be declared `async`.
+/// * The function must not use generics.
+/// * Only a single `main` task may be declared.
+///
+/// A user-defined entry macro can be optionally provided via the `entry` argument to override the
+/// default of `msp430_rt::entry`.
+///
+/// ## Examples
+/// Spawning a task:
+///
+/// ``` rust
+/// #[embassy_executor::main]
+/// async fn main(_s: embassy_executor::Spawner) {
+///     // Function body
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn main_msp430(args: TokenStream, item: TokenStream) -> TokenStream {
+    main::run(args.into(), item.into(), &main::ARCH_MSP430).into()
+}
+
 /// Creates a new `executor` instance and declares an application entry point for Cortex-M spawning the corresponding function body as an async task.
 ///
 /// The following restrictions apply:

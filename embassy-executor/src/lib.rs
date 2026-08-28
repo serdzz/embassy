@@ -1,4 +1,6 @@
 #![cfg_attr(not(any(feature = "platform-std", feature = "platform-wasm")), no_std)]
+// MSP430 is not one of the architectures with stable inline assembly support.
+#![cfg_attr(feature = "platform-msp430", feature(asm_experimental_arch))]
 #![allow(clippy::new_without_default)]
 #![allow(unsafe_op_in_unsafe_fn)]
 #![doc = include_str!("../README.md")]
@@ -27,6 +29,7 @@ macro_rules! check_at_most_one {
 check_at_most_one!(
     "platform-avr",
     "platform-cortex-m",
+    "platform-msp430",
     "platform-cortex-ar",
     "platform-riscv32",
     "platform-std",
@@ -37,6 +40,7 @@ check_at_most_one!(
 #[cfg(feature = "_platform")]
 #[cfg_attr(feature = "platform-avr", path = "platform/avr.rs")]
 #[cfg_attr(feature = "platform-cortex-m", path = "platform/cortex_m.rs")]
+#[cfg_attr(feature = "platform-msp430", path = "platform/msp430.rs")]
 #[cfg_attr(feature = "platform-cortex-ar", path = "platform/cortex_ar.rs")]
 #[cfg_attr(feature = "platform-riscv32", path = "platform/riscv32.rs")]
 #[cfg_attr(feature = "platform-std", path = "platform/std.rs")]
