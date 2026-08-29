@@ -45,7 +45,7 @@ pub(crate) enum PortReg {
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 // Which of these get used depends on which peripheral drivers the selected device has.
 #[allow(dead_code)]
-pub(crate) enum PinFunction {
+pub enum PinFunction {
     /// Ordinary input or output.
     Gpio,
     /// The first alternate function. On F1xx, the only one.

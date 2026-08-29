@@ -17,7 +17,7 @@ use core::marker::PhantomData;
 use embassy_hal_internal::{Peri, PeripheralType};
 
 use crate::clock::PeripheralClock;
-use crate::gpio::{self, AnyPin, Pin};
+use crate::gpio::{self, AnyPin, Pin, PinFunction};
 use crate::peripherals;
 
 // Control register.
@@ -80,20 +80,11 @@ trait SealedInstance {
 #[allow(private_bounds)]
 pub trait Instance: SealedInstance + PeripheralType + 'static {}
 
-/// Which alternate function a timer's outputs live on.
-#[derive(Copy, Clone)]
-pub(crate) enum Alt {
-    One,
-    /// Only TB0's outputs live here, and TB0 is normally the `embassy-time` driver, so with the
-    /// default features nothing constructs this.
-    #[allow(dead_code)]
-    Two,
-}
-
 pub(crate) trait SealedPwmPin<T> {
     /// Compare channel this pin is the output of, counting from 1.
     const CHANNEL: u8;
-    const ALT: Alt;
+    /// Which of the pin's alternate functions this timer output is.
+    const ALT: PinFunction;
 }
 
 /// A pin that is a timer's compare output.
@@ -117,7 +108,7 @@ macro_rules! impl_pin {
         $(#[$cfg])?
         impl SealedPwmPin<peripherals::$timer> for peripherals::$pin {
             const CHANNEL: u8 = $channel;
-            const ALT: Alt = $alt;
+            const ALT: PinFunction = $alt;
         }
         $(#[$cfg])?
         impl PwmPin<peripherals::$timer> for peripherals::$pin {}
@@ -145,25 +136,25 @@ mod instances {
         TB0,
         P1_6,
         1,
-        Alt::Two
+        PinFunction::Alternate2
     );
     impl_pin!(
         #[cfg(not(feature = "time-driver-tb0"))]
         TB0,
         P1_7,
         2,
-        Alt::Two
+        PinFunction::Alternate2
     );
-    impl_pin!(TB1, P2_0, 1, Alt::One);
-    impl_pin!(TB1, P2_1, 2, Alt::One);
-    impl_pin!(TB2, P5_0, 1, Alt::One);
-    impl_pin!(TB2, P5_1, 2, Alt::One);
-    impl_pin!(TB3, P6_0, 1, Alt::One);
-    impl_pin!(TB3, P6_1, 2, Alt::One);
-    impl_pin!(TB3, P6_2, 3, Alt::One);
-    impl_pin!(TB3, P6_3, 4, Alt::One);
-    impl_pin!(TB3, P6_4, 5, Alt::One);
-    impl_pin!(TB3, P6_5, 6, Alt::One);
+    impl_pin!(TB1, P2_0, 1, PinFunction::Alternate1);
+    impl_pin!(TB1, P2_1, 2, PinFunction::Alternate1);
+    impl_pin!(TB2, P5_0, 1, PinFunction::Alternate1);
+    impl_pin!(TB2, P5_1, 2, PinFunction::Alternate1);
+    impl_pin!(TB3, P6_0, 1, PinFunction::Alternate1);
+    impl_pin!(TB3, P6_1, 2, PinFunction::Alternate1);
+    impl_pin!(TB3, P6_2, 3, PinFunction::Alternate1);
+    impl_pin!(TB3, P6_3, 4, PinFunction::Alternate1);
+    impl_pin!(TB3, P6_4, 5, PinFunction::Alternate1);
+    impl_pin!(TB3, P6_5, 6, PinFunction::Alternate1);
 }
 
 #[cfg(feature = "msp430f149")]
@@ -185,45 +176,45 @@ mod instances {
         TB0,
         P4_1,
         1,
-        Alt::One
+        PinFunction::Alternate1
     );
     impl_pin!(
         #[cfg(not(feature = "time-driver-tb0"))]
         TB0,
         P4_2,
         2,
-        Alt::One
+        PinFunction::Alternate1
     );
     impl_pin!(
         #[cfg(not(feature = "time-driver-tb0"))]
         TB0,
         P4_3,
         3,
-        Alt::One
+        PinFunction::Alternate1
     );
     impl_pin!(
         #[cfg(not(feature = "time-driver-tb0"))]
         TB0,
         P4_4,
         4,
-        Alt::One
+        PinFunction::Alternate1
     );
     impl_pin!(
         #[cfg(not(feature = "time-driver-tb0"))]
         TB0,
         P4_5,
         5,
-        Alt::One
+        PinFunction::Alternate1
     );
     impl_pin!(
         #[cfg(not(feature = "time-driver-tb0"))]
         TB0,
         P4_6,
         6,
-        Alt::One
+        PinFunction::Alternate1
     );
-    impl_pin!(TA0, P1_2, 1, Alt::One);
-    impl_pin!(TA0, P1_3, 2, Alt::One);
+    impl_pin!(TA0, P1_2, 1, PinFunction::Alternate1);
+    impl_pin!(TA0, P1_3, 2, PinFunction::Alternate1);
 }
 
 #[inline]
@@ -314,10 +305,7 @@ impl<'d, T: Instance> Pwm<'d, T> {
         };
         ch.set_duty(0);
 
-        match P::ALT {
-            Alt::One => gpio::set_alternate1(&ch.pin),
-            Alt::Two => gpio::set_alternate2(&ch.pin),
-        }
+        gpio::set_alternate(&ch.pin, P::ALT);
         ch
     }
 }
@@ -391,4 +379,96 @@ impl embedded_hal::pwm::SetDutyCycle for PwmChannel<'_> {
         self.set_duty(duty);
         Ok(())
     }
+}
+
+/// Timer_A on the MSP430FR6043, and which pins its compare outputs reach.
+///
+/// Timer_B0 is the `embassy-time` driver here, so PWM comes off the five Timer_A instances instead.
+/// They have the same register layout — including the `TAxEX0` divider — so the same driver runs
+/// both.
+///
+/// The alternate function each output sits on is derived from the order of the functions in the
+/// datasheet's package pinout, quoted beside each line. See the note in `uart::TxPin`: these want
+/// checking against Table 7-1 before they are trusted on hardware.
+#[cfg(feature = "msp430fr6043")]
+mod instances_fr6043 {
+    use super::*;
+
+    impl_instance!(TA0, 0x0340, true);
+    impl_instance!(TA1, 0x0380, true);
+    impl_instance!(TA2, 0x0400, true);
+    impl_instance!(TA3, 0x0440, true);
+    impl_instance!(TA4, 0x07c0, true);
+    impl_instance!(
+        #[cfg(not(feature = "time-driver-tb0"))]
+        TB0,
+        0x03c0,
+        true
+    );
+
+    // P2.3/TA0.0/UCA0STE, P5.4/TA0.0/UCB1CLK/TA4.0
+    impl_pin!(TA0, P2_3, 1, PinFunction::Alternate1);
+    impl_pin!(TA0, P5_4, 1, PinFunction::Alternate1);
+    // P2.5/TA0.2/TA4.0, P5.7/TA0.2/UCB1STE
+    impl_pin!(TA0, P2_5, 3, PinFunction::Alternate1);
+    impl_pin!(TA0, P5_7, 3, PinFunction::Alternate1);
+
+    // P1.0/UCA1CLK/TA1.0, P7.0/TA1.0/TA1.2
+    impl_pin!(TA1, P1_0, 1, PinFunction::Alternate2);
+    impl_pin!(TA1, P7_0, 1, PinFunction::Alternate1);
+    // P1.3/UCA1SOMI/UCA1RXD/TA1.1
+    impl_pin!(TA1, P1_3, 2, PinFunction::Alternate3);
+    // P2.6/UCA0SIMO/UCA0TXD/TA1.2
+    impl_pin!(TA1, P2_6, 3, PinFunction::Alternate2);
+
+    // P1.1/UCA1STE/TA4.0
+    impl_pin!(TA4, P1_1, 1, PinFunction::Alternate2);
+    // P5.5/TA4.1/UCB1SIMO/UCB1SDA, P4.0/RTCCLK/TA4.1
+    impl_pin!(TA4, P5_5, 2, PinFunction::Alternate1);
+    impl_pin!(TA4, P4_0, 2, PinFunction::Alternate2);
+
+    // Timer_B0's own outputs, for a build that does not use it as the time driver.
+    // P3.0/TB0.0, P5.1/TB0.1, P5.2/TB0.2, P5.3/TB0.3, P1.4/TB0.4, P1.5/TB0.5
+    impl_pin!(
+        #[cfg(not(feature = "time-driver-tb0"))]
+        TB0,
+        P3_0,
+        1,
+        PinFunction::Alternate1
+    );
+    impl_pin!(
+        #[cfg(not(feature = "time-driver-tb0"))]
+        TB0,
+        P5_1,
+        2,
+        PinFunction::Alternate1
+    );
+    impl_pin!(
+        #[cfg(not(feature = "time-driver-tb0"))]
+        TB0,
+        P5_2,
+        3,
+        PinFunction::Alternate1
+    );
+    impl_pin!(
+        #[cfg(not(feature = "time-driver-tb0"))]
+        TB0,
+        P5_3,
+        4,
+        PinFunction::Alternate1
+    );
+    impl_pin!(
+        #[cfg(not(feature = "time-driver-tb0"))]
+        TB0,
+        P1_4,
+        5,
+        PinFunction::Alternate1
+    );
+    impl_pin!(
+        #[cfg(not(feature = "time-driver-tb0"))]
+        TB0,
+        P1_5,
+        6,
+        PinFunction::Alternate1
+    );
 }

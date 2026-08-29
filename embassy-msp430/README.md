@@ -13,32 +13,48 @@ TI's `msp430-elf-gcc` for linking. See `examples/msp430fr2355` for a working set
 
 Enable exactly one:
 
-| Feature          | Device      | Family |
-|------------------|-------------|--------|
-| `msp430fr2355`   | MSP430FR2355 | FR2xx, FRAM |
-| `msp430f149`     | MSP430F149   | F1xx, flash |
+| Feature          | Device       | Family      | Reachable code space |
+|------------------|--------------|-------------|----------------------|
+| `msp430fr2355`   | MSP430FR2355 | FR2xx, FRAM | 32 kB, all of it |
+| `msp430f149`     | MSP430F149   | F1xx, flash | 60 kB, all of it |
+| `msp430f2618`    | MSP430F2618  | F2xx, flash | ~51 kB of 116 |
+| `msp430fr6043`   | MSP430FR6043 | FR6xx, FRAM | ~40 kB of 64 |
 
-The two families share the CPU and little else, so not every driver exists for both. What differs is
-kept in `src/chip/`; adding a device is a file there plus a feature.
+The families share the CPU and little else, so not every driver exists for all of them. What differs
+is kept in `src/chip/`; adding a device is a file there plus a feature.
+
+The last two are MSP430X parts whose memory runs past 0xFFFF. Rust's `msp430-none-elf` target is
+16-bit throughout and has no 20-bit addressing, so the upper part is unreachable and the linker
+script has to stop at the vector table. Buying a bigger part in those families does not buy more
+room until that changes.
 
 ## Peripherals
 
-| Peripheral   | FR2355     | F149        | Async |
-|--------------|------------|-------------|-------|
-| GPIO         | yes        | yes         | edge wait, on the ports that can interrupt |
-| Time driver  | Timer_B0   | Timer_B7    | `embassy-time` |
-| Clock system | CS, with the FLL | BCS+  | - |
-| Watchdog     | yes        | yes         | - |
-| UART         | eUSCI_A    | USART       | yes |
-| SPI master   | eUSCI_A/B  | USART       | yes |
-| PWM          | Timer_B    | Timer_A/B   | - |
-| ADC          | yes        | ADC12       | yes |
-| I2C master   | eUSCI_B    | **no hardware** | yes |
-| RTC          | yes        | **no hardware** | yes |
+| Peripheral   | FR2355     | F149        | F2618       | FR6043      | Async |
+|--------------|------------|-------------|-------------|-------------|-------|
+| GPIO         | yes        | yes         | yes         | yes         | edge wait, on the ports that can interrupt |
+| Time driver  | Timer_B0   | Timer_B7    | Timer_B7    | Timer_B0    | `embassy-time` |
+| Clock system | CS, with the FLL | BCS+  | BCS+, calibrated | CS, fixed DCO | - |
+| Watchdog     | yes        | yes         | yes         | yes         | - |
+| UART         | eUSCI_A    | USART       | not yet     | eUSCI_A ×4  | yes |
+| SPI master   | eUSCI_A/B  | USART       | not yet     | eUSCI_A/B   | yes |
+| I2C master   | eUSCI_B    | **no hardware** | not yet | eUSCI_B ×2  | yes |
+| PWM          | Timer_B    | Timer_A/B   | not yet     | Timer_A ×5  | - |
+| ADC          | yes        | ADC12       | not yet     | ADC12_B     | yes |
+| RTC          | yes        | **no hardware** | **no hardware** | RTC_C  | yes |
 
-The last two are not omissions: the F149's USART does UART and SPI only — I2C arrived on this family
-with the F15x/16x — and the device has no real-time clock at all. Bit-banging I2C on two GPIOs is the
-usual answer there, and belongs in a driver crate rather than here.
+"Not yet" is work not done. **No hardware** is not an omission: the F149's USART does UART and SPI
+only — I2C arrived on this family with the F15x/16x — and neither it nor the F2618 has a real-time
+clock at all. Bit-banging I2C on two GPIOs is the usual answer there, and belongs in a driver crate
+rather than here.
+
+The FR6043's ultrasonic front end — `SAPH_A`, `SDHS`, `UUPS`, `HSPLL` and the `LEA` accelerator — is
+not wrapped. Those are peripheral singletons with no code behind them; see
+`examples/msp430fr6043/README.md`.
+
+On devices with more peripherals than convenient pins, which eUSCI a pin carries is not the same
+alternate function on every pin that can carry it. The pin traits carry that per pin, so the
+compiler picks the right `PxSEL` value from the pin you hand it.
 
 Where a driver exists for both, the API is the same and only the implementation differs, so moving
 code between the families is mostly a matter of renaming pins. The ADC is the exception: the FR2xx

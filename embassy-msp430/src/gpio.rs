@@ -16,7 +16,8 @@ use core::task::{Context, Poll};
 use embassy_hal_internal::{Peri, PeripheralType, impl_peripheral};
 use embassy_sync::waitqueue::AtomicWaker;
 
-use crate::chip::{self, PinFunction, PortReg};
+use crate::chip::{self, PortReg};
+pub use crate::chip::PinFunction;
 
 /// Number of pins that can raise an interrupt: eight per interrupt-capable port.
 const IRQ_PINS: usize = chip::IRQ_PORTS as usize * 8;
@@ -119,19 +120,29 @@ pub(crate) fn modify_reg(r: *mut u8, bit: u8, set: bool) {
     })
 }
 
-/// Hand the pin to its first alternate function, which is where the serial peripherals and the
-/// timer outputs live.
+/// Hand the pin to one of its alternate functions.
+///
+/// Which one a given peripheral is depends on the pin, not only on the peripheral: on parts with
+/// enough peripherals to go round, the same eUSCI appears as the first alternate on one pin and the
+/// second on another. So the drivers carry the answer per pin rather than assuming it.
+// Only called by the peripheral drivers, which not every device has.
+#[allow(dead_code)]
+pub(crate) fn set_alternate(pin: &AnyPin, function: PinFunction) {
+    chip::set_pin_function(pin.pin_port >> 3, 1u8 << (pin.pin_port & 7), function);
+}
+
+/// Hand the pin to its first alternate function.
 // Only called by the peripheral drivers, which not every device has.
 #[allow(dead_code)]
 pub(crate) fn set_alternate1(pin: &AnyPin) {
-    chip::set_pin_function(pin.pin_port >> 3, 1u8 << (pin.pin_port & 7), PinFunction::Alternate1);
+    set_alternate(pin, PinFunction::Alternate1);
 }
 
 /// Hand the pin to its second alternate function.
 // Only called by the peripheral drivers, which not every device has.
 #[allow(dead_code)]
 pub(crate) fn set_alternate2(pin: &AnyPin) {
-    chip::set_pin_function(pin.pin_port >> 3, 1u8 << (pin.pin_port & 7), PinFunction::Alternate2);
+    set_alternate(pin, PinFunction::Alternate2);
 }
 
 /// Hand the pin to the analog function, which disconnects the digital input buffer so a mid-rail

@@ -11,7 +11,16 @@ use embassy_sync::waitqueue::AtomicWaker;
 
 /// Four modules, each with two waker slots. UART hands one to its receive half and one to its
 /// transmit half, so the two can be awaited from separate tasks; SPI and I2C only need the first.
-const WAKER_COUNT: usize = 8;
+/// eUSCI instances on this device: four on the FR2355, six on the FR6043.
+#[cfg(feature = "msp430fr2355")]
+pub(crate) const INSTANCES: usize = 4;
+/// See [`INSTANCES`].
+#[cfg(feature = "msp430fr6043")]
+pub(crate) const INSTANCES: usize = 6;
+
+/// Two waker slots per instance: one for the receiving half and one for the transmitting half, so
+/// that the two can be awaited from separate tasks.
+const WAKER_COUNT: usize = INSTANCES * 2;
 
 #[allow(clippy::declare_interior_mutable_const)]
 const NEW_AW: AtomicWaker = AtomicWaker::new();
@@ -87,29 +96,82 @@ impl Info {
     }
 }
 
+// The eUSCI module is identical across these two devices, down to the register offsets. Only where
+// the instances sit differs, and how many there are.
+//
+// `idx` is this crate's own numbering, used to pick a waker pair; it has nothing to do with the
+// module's name.
+
+#[cfg(feature = "msp430fr2355")]
 pub(crate) static INFO_A0: Info = Info {
     base: 0x0500,
     ie_off: 0x1a,
     ifg_off: 0x1c,
     idx: 0,
 };
+#[cfg(feature = "msp430fr2355")]
 pub(crate) static INFO_A1: Info = Info {
     base: 0x0580,
     ie_off: 0x1a,
     ifg_off: 0x1c,
     idx: 1,
 };
+#[cfg(feature = "msp430fr2355")]
 pub(crate) static INFO_B0: Info = Info {
     base: 0x0540,
     ie_off: 0x2a,
     ifg_off: 0x2c,
     idx: 2,
 };
+#[cfg(feature = "msp430fr2355")]
 pub(crate) static INFO_B1: Info = Info {
     base: 0x05c0,
     ie_off: 0x2a,
     ifg_off: 0x2c,
     idx: 3,
+};
+
+#[cfg(feature = "msp430fr6043")]
+pub(crate) static INFO_A0: Info = Info {
+    base: 0x05c0,
+    ie_off: 0x1a,
+    ifg_off: 0x1c,
+    idx: 0,
+};
+#[cfg(feature = "msp430fr6043")]
+pub(crate) static INFO_A1: Info = Info {
+    base: 0x05e0,
+    ie_off: 0x1a,
+    ifg_off: 0x1c,
+    idx: 1,
+};
+#[cfg(feature = "msp430fr6043")]
+pub(crate) static INFO_A2: Info = Info {
+    base: 0x0600,
+    ie_off: 0x1a,
+    ifg_off: 0x1c,
+    idx: 2,
+};
+#[cfg(feature = "msp430fr6043")]
+pub(crate) static INFO_A3: Info = Info {
+    base: 0x0620,
+    ie_off: 0x1a,
+    ifg_off: 0x1c,
+    idx: 3,
+};
+#[cfg(feature = "msp430fr6043")]
+pub(crate) static INFO_B0: Info = Info {
+    base: 0x0640,
+    ie_off: 0x2a,
+    ifg_off: 0x2c,
+    idx: 4,
+};
+#[cfg(feature = "msp430fr6043")]
+pub(crate) static INFO_B1: Info = Info {
+    base: 0x0680,
+    ie_off: 0x2a,
+    ifg_off: 0x2c,
+    idx: 5,
 };
 
 /// Mask every source that is both enabled and asserted, then wake the module's tasks.
@@ -145,5 +207,18 @@ embassy_executor::msp430_interrupt! {
     /// eUSCI_B1, in whichever mode it is configured.
     unsafe fn EUSCI_B1() {
         on_irq(&INFO_B1);
+    }
+}
+
+#[cfg(feature = "msp430fr6043")]
+embassy_executor::msp430_interrupt! {
+    /// eUSCI_A2, in whichever mode it is configured.
+    unsafe fn EUSCI_A2() {
+        on_irq(&INFO_A2);
+    }
+
+    /// eUSCI_A3, in whichever mode it is configured.
+    unsafe fn EUSCI_A3() {
+        on_irq(&INFO_A3);
     }
 }

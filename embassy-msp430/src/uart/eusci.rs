@@ -19,7 +19,7 @@ use embassy_hal_internal::{Peri, PeripheralType};
 use super::{Config, ConfigError, DataBits, Error, Parity, StopBits};
 use crate::clock::PeripheralClock;
 use crate::eusci::{self, Info};
-use crate::gpio::{self, AnyPin, Pin};
+use crate::gpio::{self, AnyPin, Pin, PinFunction};
 use crate::peripherals;
 
 // Control word 0.
@@ -199,18 +199,90 @@ macro_rules! impl_instance {
 
 impl_instance!(EUSCI_A0, INFO_A0);
 impl_instance!(EUSCI_A1, INFO_A1);
+#[cfg(feature = "msp430fr6043")]
+impl_instance!(EUSCI_A2, INFO_A2);
+#[cfg(feature = "msp430fr6043")]
+impl_instance!(EUSCI_A3, INFO_A3);
 
 /// A pin that can be an instance's transmit line.
+///
+/// `ALTERNATE` says which of the pin's alternate functions this eUSCI is. It is per pin rather than
+/// per peripheral because on a device with more eUSCIs than convenient pins the same module appears
+/// as the first alternate on one pin and the third on another.
 #[allow(private_bounds)]
-pub trait TxPin<T: Instance>: Pin {}
-/// A pin that can be an instance's receive line.
+pub trait TxPin<T: Instance>: Pin {
+    /// Which alternate function selects this eUSCI on this pin.
+    #[doc(hidden)]
+    const ALTERNATE: PinFunction = PinFunction::Alternate1;
+}
+/// A pin that can be an instance's receive line. See [`TxPin`] on `ALTERNATE`.
 #[allow(private_bounds)]
-pub trait RxPin<T: Instance>: Pin {}
+pub trait RxPin<T: Instance>: Pin {
+    /// Which alternate function selects this eUSCI on this pin.
+    #[doc(hidden)]
+    const ALTERNATE: PinFunction = PinFunction::Alternate1;
+}
 
-impl TxPin<peripherals::EUSCI_A0> for peripherals::P1_7 {}
-impl RxPin<peripherals::EUSCI_A0> for peripherals::P1_6 {}
-impl TxPin<peripherals::EUSCI_A1> for peripherals::P4_3 {}
-impl RxPin<peripherals::EUSCI_A1> for peripherals::P4_2 {}
+#[cfg(feature = "msp430fr2355")]
+mod pins {
+    use super::*;
+
+    impl TxPin<peripherals::EUSCI_A0> for peripherals::P1_7 {}
+    impl RxPin<peripherals::EUSCI_A0> for peripherals::P1_6 {}
+    impl TxPin<peripherals::EUSCI_A1> for peripherals::P4_3 {}
+    impl RxPin<peripherals::EUSCI_A1> for peripherals::P4_2 {}
+}
+
+/// Which pin carries which eUSCI on the MSP430FR6043, and as which alternate function.
+///
+/// Every line here is derived from the package pinout in the datasheet, where a pin's functions are
+/// listed primary first: `P2.0/UCA1CLK/UCA3SIMO/UCA3TXD` makes `UCA1CLK` the first alternate and
+/// `UCA3TXD` the second. The pinout string each line comes from is quoted beside it so the
+/// derivation can be checked without the datasheet open.
+///
+/// **These need confirming against Table 7-1 before they are trusted on hardware.** The ordering
+/// convention is how this family's datasheets are written, but the table that states the
+/// `PxSEL1:PxSEL0` value outright is a graphic in the PDF and could not be read out of it. A wrong
+/// alternate here does not fail loudly — the peripheral simply never reaches the pin.
+#[cfg(feature = "msp430fr6043")]
+mod pins {
+    use super::*;
+
+    // P2.6/UCA0SIMO/UCA0TXD, P2.7/UCA0SOMI/UCA0RXD
+    impl TxPin<peripherals::EUSCI_A0> for peripherals::P2_6 {}
+    impl RxPin<peripherals::EUSCI_A0> for peripherals::P2_7 {}
+    // P4.3/UCA0SIMO/UCA0TXD, P4.4/UCA0SOMI/UCA0RXD — the second place UCA0 comes out.
+    impl TxPin<peripherals::EUSCI_A0> for peripherals::P4_3 {}
+    impl RxPin<peripherals::EUSCI_A0> for peripherals::P4_4 {}
+
+    // P1.2/UCA1SIMO/UCA1TXD/TA1.0, P1.3/UCA1SOMI/UCA1RXD/TA1.1
+    impl TxPin<peripherals::EUSCI_A1> for peripherals::P1_2 {}
+    impl RxPin<peripherals::EUSCI_A1> for peripherals::P1_3 {}
+
+    // PJ.2 and PJ.3 carry UCA2 as their first alternate, but port J is not modelled by this HAL.
+    // P5.0/TB0.0/UCA2SIMO/UCA2TXD, P5.1/TB0.1/UCA2SOMI/UCA2RXD — second alternate, after Timer_B.
+    impl TxPin<peripherals::EUSCI_A2> for peripherals::P5_0 {
+        const ALTERNATE: PinFunction = PinFunction::Alternate2;
+    }
+    impl RxPin<peripherals::EUSCI_A2> for peripherals::P5_1 {
+        const ALTERNATE: PinFunction = PinFunction::Alternate2;
+    }
+
+    // P2.0/UCA1CLK/UCA3SIMO/UCA3TXD, P2.1/UCA1STE/UCA3SOMI/UCA3RXD
+    impl TxPin<peripherals::EUSCI_A3> for peripherals::P2_0 {
+        const ALTERNATE: PinFunction = PinFunction::Alternate2;
+    }
+    impl RxPin<peripherals::EUSCI_A3> for peripherals::P2_1 {
+        const ALTERNATE: PinFunction = PinFunction::Alternate2;
+    }
+    // P4.2/UCA0STE/TB0.5/UCA3SIMO/UCA3TXD, P4.1/UCA0CLK/TB0.4/UCA3SOMI/UCA3RXD — third alternate.
+    impl TxPin<peripherals::EUSCI_A3> for peripherals::P4_2 {
+        const ALTERNATE: PinFunction = PinFunction::Alternate3;
+    }
+    impl RxPin<peripherals::EUSCI_A3> for peripherals::P4_1 {
+        const ALTERNATE: PinFunction = PinFunction::Alternate3;
+    }
+}
 
 /// The transmit half of a UART.
 pub struct UartTx<'d> {
@@ -232,21 +304,24 @@ pub struct Uart<'d> {
 
 impl<'d> Uart<'d> {
     /// Configure `instance` as a UART on `rx` and `tx`.
-    pub fn new<T: Instance>(
+    pub fn new<T: Instance, R: RxPin<T>, X: TxPin<T>>(
         _instance: Peri<'d, T>,
-        rx: Peri<'d, impl RxPin<T>>,
-        tx: Peri<'d, impl TxPin<T>>,
+        rx: Peri<'d, R>,
+        tx: Peri<'d, X>,
         config: Config,
     ) -> Result<Self, ConfigError> {
         let info = T::info();
+        // The alternate has to be read off the concrete pin type, before it is erased.
+        let rx_alt = R::ALTERNATE;
+        let tx_alt = X::ALTERNATE;
         let rx: Peri<'d, AnyPin> = rx.into();
         let tx: Peri<'d, AnyPin> = tx.into();
 
         configure(info, config)?;
 
         // Hand the pins to the eUSCI only once it is configured, so nothing is driven meanwhile.
-        gpio::set_alternate1(&rx);
-        gpio::set_alternate1(&tx);
+        gpio::set_alternate(&rx, rx_alt);
+        gpio::set_alternate(&tx, tx_alt);
 
         Ok(Self {
             tx: UartTx { info, pin: tx },

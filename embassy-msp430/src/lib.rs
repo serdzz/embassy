@@ -52,19 +52,37 @@ pub mod wdt;
 
 // The FR2xx serial and analog peripherals share nothing with the F1xx ones below the pin, so these
 // are for now only available on the family they were written against.
-#[cfg(any(feature = "msp430fr2355", feature = "msp430f149"))]
+#[cfg(any(
+    feature = "msp430fr2355",
+    feature = "msp430f149",
+    feature = "msp430fr6043"
+))]
 pub mod adc;
-#[cfg(feature = "msp430fr2355")]
+#[cfg(any(feature = "msp430fr2355", feature = "msp430fr6043"))]
 pub(crate) mod eusci;
-#[cfg(feature = "msp430fr2355")]
+#[cfg(any(feature = "msp430fr2355", feature = "msp430fr6043"))]
 pub mod i2c;
-#[cfg(any(feature = "msp430fr2355", feature = "msp430f149"))]
+#[cfg(any(
+    feature = "msp430fr2355",
+    feature = "msp430f149",
+    feature = "msp430fr6043"
+))]
 pub mod pwm;
 #[cfg(feature = "msp430fr2355")]
 pub mod rtc;
-#[cfg(any(feature = "msp430fr2355", feature = "msp430f149"))]
+#[cfg(feature = "msp430fr6043")]
+pub mod rtc_c;
+#[cfg(any(
+    feature = "msp430fr2355",
+    feature = "msp430f149",
+    feature = "msp430fr6043"
+))]
 pub mod spi;
-#[cfg(any(feature = "msp430fr2355", feature = "msp430f149"))]
+#[cfg(any(
+    feature = "msp430fr2355",
+    feature = "msp430f149",
+    feature = "msp430fr6043"
+))]
 pub mod uart;
 #[cfg(feature = "msp430f149")]
 pub(crate) mod usart;

@@ -5,6 +5,7 @@
 //! only the driver behind them changes.
 
 #[cfg_attr(feature = "msp430fr2355", path = "eusci.rs")]
+#[cfg_attr(feature = "msp430fr6043", path = "eusci.rs")]
 #[cfg_attr(feature = "msp430f149", path = "usart.rs")]
 mod device;
 

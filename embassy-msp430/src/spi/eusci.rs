@@ -20,7 +20,7 @@ use embedded_hal::spi::{Phase, Polarity};
 use super::{BitOrder, Config, ConfigError, Error};
 use crate::clock::PeripheralClock;
 use crate::eusci::{self, Info};
-use crate::gpio::{self, AnyPin, Pin};
+use crate::gpio::{self, AnyPin, Pin, PinFunction};
 use crate::peripherals;
 
 // Control word 0, SPI mode.
@@ -80,31 +80,101 @@ macro_rules! impl_instance {
 
 impl_instance!(EUSCI_A0, INFO_A0, STATW_A);
 impl_instance!(EUSCI_A1, INFO_A1, STATW_A);
+#[cfg(feature = "msp430fr6043")]
+impl_instance!(EUSCI_A2, INFO_A2, STATW_A);
+#[cfg(feature = "msp430fr6043")]
+impl_instance!(EUSCI_A3, INFO_A3, STATW_A);
 impl_instance!(EUSCI_B0, INFO_B0, STATW_B);
 impl_instance!(EUSCI_B1, INFO_B1, STATW_B);
 
 /// A pin that can be an instance's clock output.
+///
+/// `ALTERNATE` says which of the pin's alternate functions this eUSCI is — per pin, because the
+/// same module is not always the same alternate on every pin that can carry it.
 #[allow(private_bounds)]
-pub trait SckPin<T: Instance>: Pin {}
-/// A pin that can be an instance's master-out line (`SIMO`).
+pub trait SckPin<T: Instance>: Pin {
+    /// Which alternate function selects this eUSCI on this pin.
+    #[doc(hidden)]
+    const ALTERNATE: PinFunction = PinFunction::Alternate1;
+}
+/// A pin that can be an instance's master-out line (`SIMO`). See [`SckPin`] on `ALTERNATE`.
 #[allow(private_bounds)]
-pub trait MosiPin<T: Instance>: Pin {}
-/// A pin that can be an instance's master-in line (`SOMI`).
+pub trait MosiPin<T: Instance>: Pin {
+    /// Which alternate function selects this eUSCI on this pin.
+    #[doc(hidden)]
+    const ALTERNATE: PinFunction = PinFunction::Alternate1;
+}
+/// A pin that can be an instance's master-in line (`SOMI`). See [`SckPin`] on `ALTERNATE`.
 #[allow(private_bounds)]
-pub trait MisoPin<T: Instance>: Pin {}
+pub trait MisoPin<T: Instance>: Pin {
+    /// Which alternate function selects this eUSCI on this pin.
+    #[doc(hidden)]
+    const ALTERNATE: PinFunction = PinFunction::Alternate1;
+}
 
 macro_rules! impl_pins {
     ($peri:ident, $sck:ident, $mosi:ident, $miso:ident) => {
-        impl SckPin<peripherals::$peri> for peripherals::$sck {}
-        impl MosiPin<peripherals::$peri> for peripherals::$mosi {}
-        impl MisoPin<peripherals::$peri> for peripherals::$miso {}
+        impl_pins!($peri, $sck, $mosi, $miso, PinFunction::Alternate1);
+    };
+    ($peri:ident, $sck:ident, $mosi:ident, $miso:ident, $alt:expr) => {
+        impl SckPin<peripherals::$peri> for peripherals::$sck {
+            const ALTERNATE: PinFunction = $alt;
+        }
+        impl MosiPin<peripherals::$peri> for peripherals::$mosi {
+            const ALTERNATE: PinFunction = $alt;
+        }
+        impl MisoPin<peripherals::$peri> for peripherals::$miso {
+            const ALTERNATE: PinFunction = $alt;
+        }
     };
 }
 
-impl_pins!(EUSCI_A0, P1_5, P1_7, P1_6);
-impl_pins!(EUSCI_A1, P4_1, P4_3, P4_2);
-impl_pins!(EUSCI_B0, P1_1, P1_2, P1_3);
-impl_pins!(EUSCI_B1, P4_5, P4_6, P4_7);
+#[cfg(feature = "msp430fr2355")]
+mod pins {
+    use super::*;
+
+    impl_pins!(EUSCI_A0, P1_5, P1_7, P1_6);
+    impl_pins!(EUSCI_A1, P4_1, P4_3, P4_2);
+    impl_pins!(EUSCI_B0, P1_1, P1_2, P1_3);
+    impl_pins!(EUSCI_B1, P4_5, P4_6, P4_7);
+}
+
+/// Which pins carry which eUSCI as an SPI on the MSP430FR6043.
+///
+/// Only one set of pins per instance, chosen so that all three lines of a set sit on the same
+/// alternate — the parts have more mappings than this, but a set split across two alternates is a
+/// wiring trap rather than a feature. See the note in `uart::TxPin`: the alternates are derived
+/// from the datasheet's pinout ordering and want checking against Table 7-1.
+#[cfg(feature = "msp430fr6043")]
+mod pins {
+    use super::*;
+
+    // P4.1/UCA0CLK, P4.3/UCA0SIMO, P4.4/UCA0SOMI
+    impl_pins!(EUSCI_A0, P4_1, P4_3, P4_4);
+    // P1.0/UCA1CLK, P1.2/UCA1SIMO, P1.3/UCA1SOMI
+    impl_pins!(EUSCI_A1, P1_0, P1_2, P1_3);
+    // P5.2/TB0.2/UCA2CLK, P5.0/TB0.0/UCA2SIMO, P5.1/TB0.1/UCA2SOMI
+    impl_pins!(EUSCI_A2, P5_2, P5_0, P5_1, PinFunction::Alternate2);
+    // P1.7/USSTRG/UCA3CLK, P2.0/UCA1CLK/UCA3SIMO, P2.1/UCA1STE/UCA3SOMI
+    impl_pins!(EUSCI_A3, P1_7, P2_0, P2_1, PinFunction::Alternate2);
+    // P5.4/TA0.0/UCB1CLK, P5.5/TA4.1/UCB1SIMO, P5.6/TB0OUTH/UCB1SOMI
+    impl_pins!(EUSCI_B1, P5_4, P5_5, P5_6, PinFunction::Alternate2);
+
+    // UCB0 is the exception: its clock and SIMO are second alternates while SOMI is a third, so it
+    // cannot go through the macro.
+    // P1.5/TB0.5/UCB0CLK
+    impl SckPin<peripherals::EUSCI_B0> for peripherals::P1_5 {
+        const ALTERNATE: PinFunction = PinFunction::Alternate2;
+    }
+    // P1.6/UCA3STE/UCB0SIMO
+    impl MosiPin<peripherals::EUSCI_B0> for peripherals::P1_6 {
+        const ALTERNATE: PinFunction = PinFunction::Alternate2;
+    }
+    // P1.7/USSTRG/UCA3CLK/UCB0SOMI
+    impl MisoPin<peripherals::EUSCI_B0> for peripherals::P1_7 {
+        const ALTERNATE: PinFunction = PinFunction::Alternate3;
+    }
+}
 
 /// An SPI master.
 pub struct Spi<'d> {
@@ -115,34 +185,52 @@ pub struct Spi<'d> {
 
 impl<'d> Spi<'d> {
     /// Configure `instance` as a full-duplex SPI master.
-    pub fn new<T: Instance>(
+    pub fn new<T: Instance, S: SckPin<T>, M: MosiPin<T>, I: MisoPin<T>>(
         _instance: Peri<'d, T>,
-        sck: Peri<'d, impl SckPin<T>>,
-        mosi: Peri<'d, impl MosiPin<T>>,
-        miso: Peri<'d, impl MisoPin<T>>,
+        sck: Peri<'d, S>,
+        mosi: Peri<'d, M>,
+        miso: Peri<'d, I>,
         config: Config,
     ) -> Result<Self, ConfigError> {
-        Self::build::<T>(sck.into(), mosi.into(), Some(miso.into()), config)
+        Self::build::<T>(
+            (sck.into(), S::ALTERNATE),
+            (mosi.into(), M::ALTERNATE),
+            Some((miso.into(), I::ALTERNATE)),
+            config,
+        )
     }
 
     /// Configure `instance` as a transmit-only SPI master, leaving the `SOMI` pin free.
     ///
     /// Reads return zeroes, since nothing is wired to shift data back in.
-    pub fn new_txonly<T: Instance>(
+    pub fn new_txonly<T: Instance, S: SckPin<T>, M: MosiPin<T>>(
         _instance: Peri<'d, T>,
-        sck: Peri<'d, impl SckPin<T>>,
-        mosi: Peri<'d, impl MosiPin<T>>,
+        sck: Peri<'d, S>,
+        mosi: Peri<'d, M>,
         config: Config,
     ) -> Result<Self, ConfigError> {
-        Self::build::<T>(sck.into(), mosi.into(), None, config)
+        Self::build::<T>(
+            (sck.into(), S::ALTERNATE),
+            (mosi.into(), M::ALTERNATE),
+            None,
+            config,
+        )
     }
 
+    /// Each pin arrives with the alternate function that reaches this eUSCI on it, since the type
+    /// that knew has been erased by now.
     fn build<T: Instance>(
-        sck: Peri<'d, AnyPin>,
-        mosi: Peri<'d, AnyPin>,
-        miso: Option<Peri<'d, AnyPin>>,
+        sck: (Peri<'d, AnyPin>, PinFunction),
+        mosi: (Peri<'d, AnyPin>, PinFunction),
+        miso: Option<(Peri<'d, AnyPin>, PinFunction)>,
         config: Config,
     ) -> Result<Self, ConfigError> {
+        let (sck, sck_alt) = sck;
+        let (mosi, mosi_alt) = mosi;
+        let (miso, miso_alt) = match miso {
+            Some((pin, alt)) => (Some(pin), alt),
+            None => (None, PinFunction::Alternate1),
+        };
         let info = T::info();
 
         let clocks = crate::clocks().ok_or(ConfigError::ClocksNotInitialized)?;
@@ -178,10 +266,10 @@ impl<'d> Spi<'d> {
         info.write(CTLW0, ctlw0 & !UCSWRST);
 
         // Hand the pins over only once the module is driving sensible levels.
-        gpio::set_alternate1(&sck);
-        gpio::set_alternate1(&mosi);
+        gpio::set_alternate(&sck, sck_alt);
+        gpio::set_alternate(&mosi, mosi_alt);
         if let Some(miso) = &miso {
-            gpio::set_alternate1(miso);
+            gpio::set_alternate(miso, miso_alt);
         }
 
         Ok(Self {

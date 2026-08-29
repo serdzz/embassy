@@ -75,10 +75,13 @@ msp430f2618 = ["dep:msp430f2618-pac"]
 ## FRAM is reachable — the rest is above 0xFFFF and needs 20-bit addressing that Rust's msp430
 ## target does not have.
 ##
-## GPIO, the time driver, the clock system and the watchdog are available. Nothing else is: its
-## eUSCI serial peripherals, ADC12_B and RTC_C have no drivers here yet, and neither does the
-## ultrasonic front end — SAPH_A, SDHS, UUPS, HSPLL and the LEA accelerator are singletons with no
-## code behind them. See the README on what writing that would involve.
+## Everything this crate does is available: GPIO, the time driver, the clock system, the watchdog,
+## UART, SPI and I2C on its six eUSCIs, PWM on the five Timer_A instances, the ADC12_B converter and
+## the RTC_C calendar clock.
+##
+## What is not is the ultrasonic front end. SAPH_A, SDHS, UUPS, HSPLL and the LEA accelerator are
+## peripheral singletons with no code behind them; see the README on what writing that would
+## involve.
 msp430fr6043 = ["dep:msp430fr6043-pac"]
 
 #! ### Time driver

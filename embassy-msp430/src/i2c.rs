@@ -26,7 +26,7 @@ use embedded_hal::i2c::Operation;
 
 use crate::clock::PeripheralClock;
 use crate::eusci::{self, Info};
-use crate::gpio::{self, AnyPin, Pin};
+use crate::gpio::{self, AnyPin, Pin, PinFunction};
 use crate::peripherals;
 
 // Control word 0, I2C mode.
@@ -145,16 +145,58 @@ impl_instance!(EUSCI_B0, INFO_B0);
 impl_instance!(EUSCI_B1, INFO_B1);
 
 /// A pin that can be an instance's clock line.
+///
+/// `ALTERNATE` says which of the pin's alternate functions this eUSCI is — per pin, because the
+/// same module is not always the same alternate on every pin that can carry it.
 #[allow(private_bounds)]
-pub trait SclPin<T: Instance>: Pin {}
-/// A pin that can be an instance's data line.
+pub trait SclPin<T: Instance>: Pin {
+    /// Which alternate function selects this eUSCI on this pin.
+    #[doc(hidden)]
+    const ALTERNATE: PinFunction = PinFunction::Alternate1;
+}
+/// A pin that can be an instance's data line. See [`SclPin`] on `ALTERNATE`.
 #[allow(private_bounds)]
-pub trait SdaPin<T: Instance>: Pin {}
+pub trait SdaPin<T: Instance>: Pin {
+    /// Which alternate function selects this eUSCI on this pin.
+    #[doc(hidden)]
+    const ALTERNATE: PinFunction = PinFunction::Alternate1;
+}
 
-impl SclPin<peripherals::EUSCI_B0> for peripherals::P1_3 {}
-impl SdaPin<peripherals::EUSCI_B0> for peripherals::P1_2 {}
-impl SclPin<peripherals::EUSCI_B1> for peripherals::P4_7 {}
-impl SdaPin<peripherals::EUSCI_B1> for peripherals::P4_6 {}
+#[cfg(feature = "msp430fr2355")]
+mod pins {
+    use super::*;
+
+    impl SclPin<peripherals::EUSCI_B0> for peripherals::P1_3 {}
+    impl SdaPin<peripherals::EUSCI_B0> for peripherals::P1_2 {}
+    impl SclPin<peripherals::EUSCI_B1> for peripherals::P4_7 {}
+    impl SdaPin<peripherals::EUSCI_B1> for peripherals::P4_6 {}
+}
+
+/// Which pins carry I2C on the MSP430FR6043.
+///
+/// See the note in `uart::TxPin`: the alternates are derived from the order of the functions in the
+/// datasheet's package pinout and want checking against Table 7-1.
+#[cfg(feature = "msp430fr6043")]
+mod pins {
+    use super::*;
+
+    // P1.7/USSTRG/UCA3CLK/UCB0SOMI/UCB0SCL — third alternate, unlike its data line.
+    impl SclPin<peripherals::EUSCI_B0> for peripherals::P1_7 {
+        const ALTERNATE: PinFunction = PinFunction::Alternate3;
+    }
+    // P1.6/UCA3STE/UCB0SIMO/UCB0SDA
+    impl SdaPin<peripherals::EUSCI_B0> for peripherals::P1_6 {
+        const ALTERNATE: PinFunction = PinFunction::Alternate2;
+    }
+    // P5.6/TB0OUTH/UCB1SOMI/UCB1SCL
+    impl SclPin<peripherals::EUSCI_B1> for peripherals::P5_6 {
+        const ALTERNATE: PinFunction = PinFunction::Alternate2;
+    }
+    // P5.5/TA4.1/UCB1SIMO/UCB1SDA
+    impl SdaPin<peripherals::EUSCI_B1> for peripherals::P5_5 {
+        const ALTERNATE: PinFunction = PinFunction::Alternate2;
+    }
+}
 
 /// An I2C master.
 pub struct I2c<'d> {
@@ -186,13 +228,16 @@ impl<'d> I2c<'d> {
     /// Configure `instance` as an I2C master.
     ///
     /// Both lines need external pull-ups; the eUSCI drives them open-drain and does not pull up.
-    pub fn new<T: Instance>(
+    pub fn new<T: Instance, C: SclPin<T>, D: SdaPin<T>>(
         _instance: Peri<'d, T>,
-        scl: Peri<'d, impl SclPin<T>>,
-        sda: Peri<'d, impl SdaPin<T>>,
+        scl: Peri<'d, C>,
+        sda: Peri<'d, D>,
         config: Config,
     ) -> Result<Self, ConfigError> {
         let info = T::info();
+        // Read off the concrete pin types before they are erased.
+        let scl_alt = C::ALTERNATE;
+        let sda_alt = D::ALTERNATE;
         let scl: Peri<'d, AnyPin> = scl.into();
         let sda: Peri<'d, AnyPin> = sda.into();
 
@@ -218,8 +263,8 @@ impl<'d> I2c<'d> {
         info.write(info.ifg_off, 0);
         info.write(CTLW0, ctlw0 & !UCSWRST);
 
-        gpio::set_alternate1(&scl);
-        gpio::set_alternate1(&sda);
+        gpio::set_alternate(&scl, scl_alt);
+        gpio::set_alternate(&sda, sda_alt);
 
         Ok(Self { info, pins: [scl, sda] })
     }
