@@ -7,7 +7,8 @@ The ultrasonic sensing part, running Embassy.
 | `blinky` | The clock, the time driver, the executor and GPIO — the floor |
 | `uart` | `eUSCI_A0` echoing characters while an LED keeps blinking |
 | `sensors` | ADC12_B, the RTC_C calendar clock and PWM, reporting once a minute and asleep in between |
-| `flow` | The ultrasonic front end: ping both ways, correlate, report the difference in flight time |
+| `uss_scope` | Dump a captured ultrasonic waveform over the UART. **Run this first** |
+| `flow` | Ping both ways, correlate, report the difference in flight time |
 
 ## What it costs
 
@@ -18,12 +19,13 @@ Linked with `cargo build --release`, measured with `msp430-elf-size`:
 | `blinky` | 4 680 B | 352 B | 12% and 9% |
 | `uart` | 6 146 B | 422 B | 15% and 10% |
 | `sensors` | 6 616 B | 414 B | 17% and 10% |
-| `flow` | 12 210 B | 1 270 B | 30% and 31% |
+| `flow` | 12 772 B | 1 270 B | 31% and 31% |
+| `uss_scope` | 11 228 B | 1 302 B | 28% and 32% |
 
 So the floor — clock, FRAM wait states, time driver, executor with its low-power sleep, and GPIO —
 is about 4.7 kB, and a program using four drivers is about 6.6 kB. A meter that also captures and
-correlates is about 12 kB, most of the RAM being the sample buffer: 400 samples at two bytes each.
-Roughly **28 kB of FRAM is left** on top of `flow`.
+correlates is under 13 kB, most of the RAM being the sample buffer: 400 samples at two bytes each.
+Roughly **27 kB of FRAM is left** on top of `flow`.
 
 Whether that is enough depends entirely on what the application is. For a flow meter it has to hold
 TI's ultrasonic sensing library, the metrology, the display and the comms — worth measuring before
@@ -60,6 +62,21 @@ been confirmed against it, and none has run on hardware. A wrong alternate does 
 peripheral simply never reaches the pin. Worth an hour with the datasheet before the first board.
 
 ## The ultrasonic front end
+
+### Start with `uss_scope`
+
+`flow` prints a difference in flight time, and on a board nobody has measured yet there is no way to
+tell a good one from a wrong one. `uss_scope` prints the samples instead, one per line, so they can
+be pasted into anything that plots a column of numbers — and a plot answers the questions bring-up
+actually turns on: whether the transducer is ringing at all, where in the capture the burst lands,
+how big it is, and whether the transmitting transducer has stopped ringing before the echo arrives.
+It also reports the peak of each direction and suggests a threshold from it.
+
+`Config::default()` is a guess about somebody else's plumbing — a 1 MHz transducer on an 8 MHz
+crystal. The excitation frequency, the gain and the capture window all want setting from what
+`uss_scope` shows before `flow` means anything.
+
+### The driver
 
 `embassy_msp430::uss` drives all four modules — `UUPS` for the analog supply, `HSPLL` for the fast
 clock, `SAPH_A` for the transducers and the bias, `SDHS` for the converter — and captures a waveform

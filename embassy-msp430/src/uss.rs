@@ -348,7 +348,9 @@ impl<'d> Uss<'d> {
         sdhs: Peri<'d, peripherals::SDHS>,
         config: Config,
     ) -> Result<Self, Error> {
-        let (lper, hper) = pulse_periods(&config)?;
+        // Checked before anything is powered on, so an unachievable excitation frequency is a
+        // rejected call rather than a front end left running.
+        pulse_periods(&config)?;
 
         let mut uss = Self {
             _uups: uups,
@@ -358,12 +360,32 @@ impl<'d> Uss<'d> {
             config,
         };
 
-        uss.power_up()?;
-        uss.start_clock()?;
-        uss.configure_converter();
-        uss.configure_front_end(lper, hper);
-
+        uss.bring_up()?;
         Ok(uss)
+    }
+
+    /// Bring the front end back up after [`Uss::power_down`].
+    ///
+    /// Powering down does not just gate a clock: it drops the analog supply and stops the crystal,
+    /// and everything configured in the four modules goes with them. So this is the whole sequence
+    /// again, not a resume — which is worth knowing, because it costs the crystal's start-up time,
+    /// a millisecond or so, every time.
+    ///
+    /// A meter that measures once a second and sleeps in between should still do this: a
+    /// millisecond of oscillator against a second of powered-down analog front end is a trade worth
+    /// making on a battery.
+    pub fn restart(&mut self) -> Result<(), Error> {
+        self.bring_up()
+    }
+
+    /// The bring-up sequence, shared by construction and [`Uss::restart`].
+    fn bring_up(&mut self) -> Result<(), Error> {
+        let (lper, hper) = pulse_periods(&self.config)?;
+        self.power_up()?;
+        self.start_clock()?;
+        self.configure_converter();
+        self.configure_front_end(lper, hper);
+        Ok(())
     }
 
     /// Bring up the analog supply.

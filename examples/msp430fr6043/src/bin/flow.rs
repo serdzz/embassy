@@ -77,6 +77,15 @@ async fn main(_spawner: Spawner) {
     let mut digits = [0u8; 8];
 
     loop {
+        // Powering down drops the analog supply and stops the crystal, so coming back is the whole
+        // bring-up again, not a resume. It still pays for itself against a second of everything
+        // switched off.
+        if uss.restart().is_err() {
+            uart.write(b"USS did not restart\r\n").await.unwrap();
+            Timer::after(Duration::from_secs(1)).await;
+            continue;
+        }
+
         match uss.capture_pair(Channel::Ch0, &mut buf).await {
             Ok((up, down)) => {
                 match tof::analyse(up, down, &uss_config, THRESHOLD, MAX_LAG) {
