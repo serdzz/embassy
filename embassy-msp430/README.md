@@ -31,6 +31,12 @@ both, an internal `_fr504x_604x` feature is what the drivers are written against
 list carries the one thing that differs. The FR5043 costs about a third less and is the easier of
 the two to buy.
 
+What does differ is the package, and the HAL enforces it: only the pins a package actually brings
+out are declared, so a peripheral wired to a pin that is not there is a compile error rather than
+silence. The 80-pin FR6043 has 49 port pins, the 64-pin FR5043 has 34 — a strict subset — and P8 and
+P9 exist as registers on both with no pins on any package, so neither declares them. Every
+peripheral still reaches at least one pin on both.
+
 The last two are MSP430X parts whose memory runs past 0xFFFF. Rust's `msp430-none-elf` target is
 16-bit throughout and has no 20-bit addressing, so the upper part is unreachable and the linker
 script has to stop at the vector table. Buying a bigger part in those families does not buy more

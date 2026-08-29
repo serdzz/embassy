@@ -233,6 +233,8 @@ impl_channel!(P1_5, 3);
 impl_channel!(P1_2, 8);
 impl_channel!(P1_3, 9);
 impl_channel!(P2_2, 14);
+// A15 is on P2.3, which only the 80-pin package brings out.
+#[cfg(feature = "msp430fr6043")]
 impl_channel!(P2_3, 15);
 
 #[inline]

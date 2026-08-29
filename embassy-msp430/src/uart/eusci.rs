@@ -248,8 +248,10 @@ mod pins {
 mod pins {
     use super::*;
 
-    // P2.6/UCA0SIMO/UCA0TXD, P2.7/UCA0SOMI/UCA0RXD
+    // P2.6/UCA0SIMO/UCA0TXD, P2.7/UCA0SOMI/UCA0RXD -- only on the 80-pin package.
+    #[cfg(feature = "msp430fr6043")]
     impl TxPin<peripherals::EUSCI_A0> for peripherals::P2_6 {}
+    #[cfg(feature = "msp430fr6043")]
     impl RxPin<peripherals::EUSCI_A0> for peripherals::P2_7 {}
     // P4.3/UCA0SIMO/UCA0TXD, P4.4/UCA0SOMI/UCA0RXD — the second place UCA0 comes out.
     impl TxPin<peripherals::EUSCI_A0> for peripherals::P4_3 {}

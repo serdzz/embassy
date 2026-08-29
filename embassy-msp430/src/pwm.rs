@@ -406,11 +406,25 @@ mod instances_fr6043 {
         true
     );
 
-    // P2.3/TA0.0/UCA0STE, P5.4/TA0.0/UCB1CLK/TA4.0
-    impl_pin!(TA0, P2_3, 1, PinFunction::Alternate1);
+    // P2.3/TA0.0/UCA0STE, P5.4/TA0.0/UCB1CLK/TA4.0. P2.3 is 80-pin only, so the FR5043 reaches
+    // this channel through P5.4 alone -- which is why every channel below keeps a pin that both
+    // packages bring out.
+    impl_pin!(
+        #[cfg(feature = "msp430fr6043")]
+        TA0,
+        P2_3,
+        1,
+        PinFunction::Alternate1
+    );
     impl_pin!(TA0, P5_4, 1, PinFunction::Alternate1);
-    // P2.5/TA0.2/TA4.0, P5.7/TA0.2/UCB1STE
-    impl_pin!(TA0, P2_5, 3, PinFunction::Alternate1);
+    // P2.5/TA0.2/TA4.0 (80-pin only), P5.7/TA0.2/UCB1STE
+    impl_pin!(
+        #[cfg(feature = "msp430fr6043")]
+        TA0,
+        P2_5,
+        3,
+        PinFunction::Alternate1
+    );
     impl_pin!(TA0, P5_7, 3, PinFunction::Alternate1);
 
     // P1.0/UCA1CLK/TA1.0, P7.0/TA1.0/TA1.2
@@ -418,8 +432,15 @@ mod instances_fr6043 {
     impl_pin!(TA1, P7_0, 1, PinFunction::Alternate1);
     // P1.3/UCA1SOMI/UCA1RXD/TA1.1
     impl_pin!(TA1, P1_3, 2, PinFunction::Alternate3);
-    // P2.6/UCA0SIMO/UCA0TXD/TA1.2
-    impl_pin!(TA1, P2_6, 3, PinFunction::Alternate2);
+    // P2.6/UCA0SIMO/UCA0TXD/TA1.2 -- 80-pin only, and the only pin for TA1.2, so this channel is
+    // not reachable on the FR5043.
+    impl_pin!(
+        #[cfg(feature = "msp430fr6043")]
+        TA1,
+        P2_6,
+        3,
+        PinFunction::Alternate2
+    );
 
     // P1.1/UCA1STE/TA4.0
     impl_pin!(TA4, P1_1, 1, PinFunction::Alternate2);
@@ -430,7 +451,7 @@ mod instances_fr6043 {
     // Timer_B0's own outputs, for a build that does not use it as the time driver.
     // P3.0/TB0.0, P5.1/TB0.1, P5.2/TB0.2, P5.3/TB0.3, P1.4/TB0.4, P1.5/TB0.5
     impl_pin!(
-        #[cfg(not(feature = "time-driver-tb0"))]
+        #[cfg(all(not(feature = "time-driver-tb0"), feature = "msp430fr6043"))]
         TB0,
         P3_0,
         1,

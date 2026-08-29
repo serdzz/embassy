@@ -46,9 +46,11 @@ async fn main(_spawner: Spawner) {
     adc_config.sample_time = SampleTime::_64;
     let mut adc = Adc::new(p.ADC12, adc_config);
 
-    // Something for the PWM to drive: TA0.0 on P2.3, at 1 kHz, a quarter on.
+    // Something for the PWM to drive: TA0.0 on P5.4, at 1 kHz, a quarter on. P2.3 carries the same
+    // channel and is the obvious choice on an 80-pin FR6043 -- but it is not bonded out on the
+    // FR5043's 64-pin package, and this example builds for both.
     let mut pwm = Pwm::new(p.TA0, 1_000, PwmConfig::default()).unwrap();
-    let mut channel = pwm.channel(p.P2_3);
+    let mut channel = pwm.channel(p.P5_4);
     let quarter = channel.max_duty_cycle() / 4;
     channel.set_duty(quarter);
 
