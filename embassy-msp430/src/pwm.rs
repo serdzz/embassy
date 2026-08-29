@@ -390,7 +390,7 @@ impl embedded_hal::pwm::SetDutyCycle for PwmChannel<'_> {
 /// The alternate function each output sits on is derived from the order of the functions in the
 /// datasheet's package pinout, quoted beside each line. See the note in `uart::TxPin`: these want
 /// checking against Table 7-1 before they are trusted on hardware.
-#[cfg(feature = "msp430fr6043")]
+#[cfg(feature = "_fr504x_604x")]
 mod instances_fr6043 {
     use super::*;
 

@@ -1,6 +1,14 @@
-# MSP430FR6043 examples
+# MSP430FR6043 and FR5043 examples
 
-The ultrasonic sensing part, running Embassy.
+The ultrasonic sensing family, running Embassy. Every example here builds unchanged for either
+device — the FR5043 is the FR6043 without the segment LCD driver, which none of these uses:
+
+```sh
+cargo build --release                                            # FR6043, the default
+cargo build --release --no-default-features -F msp430fr5043      # FR5043
+```
+
+The directory keeps the FR6043 name because that is the default and the part the EVM carries.
 
 | Example | What it shows |
 | --- | --- |

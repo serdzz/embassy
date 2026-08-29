@@ -199,9 +199,9 @@ macro_rules! impl_instance {
 
 impl_instance!(EUSCI_A0, INFO_A0);
 impl_instance!(EUSCI_A1, INFO_A1);
-#[cfg(feature = "msp430fr6043")]
+#[cfg(feature = "_fr504x_604x")]
 impl_instance!(EUSCI_A2, INFO_A2);
-#[cfg(feature = "msp430fr6043")]
+#[cfg(feature = "_fr504x_604x")]
 impl_instance!(EUSCI_A3, INFO_A3);
 
 /// A pin that can be an instance's transmit line.
@@ -244,7 +244,7 @@ mod pins {
 /// convention is how this family's datasheets are written, but the table that states the
 /// `PxSEL1:PxSEL0` value outright is a graphic in the PDF and could not be read out of it. A wrong
 /// alternate here does not fail loudly — the peripheral simply never reaches the pin.
-#[cfg(feature = "msp430fr6043")]
+#[cfg(feature = "_fr504x_604x")]
 mod pins {
     use super::*;
 

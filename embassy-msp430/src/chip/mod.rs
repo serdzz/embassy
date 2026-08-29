@@ -13,7 +13,7 @@
 #[cfg_attr(feature = "msp430fr2355", path = "fr2355.rs")]
 #[cfg_attr(feature = "msp430f149", path = "f149.rs")]
 #[cfg_attr(feature = "msp430f2618", path = "f2618.rs")]
-#[cfg_attr(feature = "msp430fr6043", path = "fr6043.rs")]
+#[cfg_attr(feature = "_fr504x_604x", path = "fr504x_604x.rs")]
 mod device;
 
 pub(crate) use device::*;

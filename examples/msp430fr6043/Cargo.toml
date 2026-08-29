@@ -4,8 +4,18 @@ name = "embassy-msp430fr6043-examples"
 version = "0.1.0"
 license = "MIT OR Apache-2.0"
 
+[features]
+# Either device runs all of these unchanged: the FR5043 is the FR6043 without the segment LCD
+# driver, which nothing here uses, in a 64-pin package instead of 80.
+default = ["msp430fr6043"]
+
+## Build for the MSP430FR6043.
+msp430fr6043 = ["embassy-msp430/msp430fr6043"]
+## Build for the MSP430FR5043.
+msp430fr5043 = ["embassy-msp430/msp430fr5043"]
+
 [dependencies]
-embassy-msp430 = { version = "0.1.0", path = "../../embassy-msp430", features = ["msp430fr6043", "time-driver-tb0"] }
+embassy-msp430 = { version = "0.1.0", path = "../../embassy-msp430", default-features = false, features = ["time-driver-tb0"] }
 embassy-executor = { version = "0.10.0", path = "../../embassy-executor", features = ["platform-msp430", "executor-thread"] }
 embassy-time = { version = "0.5.1", path = "../../embassy-time", features = ["tick-hz-32_768"] }
 

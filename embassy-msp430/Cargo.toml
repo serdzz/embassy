@@ -47,6 +47,7 @@ msp430fr2355-pac = { package = "msp430fr2355", version = "0.6.1", features = ["r
 msp430f149-pac = { package = "msp430f149", version = "0.1.0", path = "../msp430f149-pac", features = ["rt", "critical-section"], optional = true }
 msp430f2618-pac = { package = "msp430f2618", version = "0.1.0", path = "../msp430f2618-pac", features = ["rt", "critical-section"], optional = true }
 msp430fr6043-pac = { package = "msp430fr6043", version = "0.1.0", path = "../msp430fr6043-pac", features = ["rt", "critical-section"], optional = true }
+msp430fr5043-pac = { package = "msp430fr5043", version = "0.1.0", path = "../msp430fr5043-pac", features = ["rt", "critical-section"], optional = true }
 
 [features]
 default = []
@@ -81,13 +82,27 @@ msp430f2618 = ["dep:msp430f2618-pac"]
 ##
 ## The ultrasonic front end is driven too — UUPS, HSPLL, SAPH_A and SDHS — though not to the
 ## accuracy of TI's own library; see `uss`. The LEA accelerator has no driver.
-msp430fr6043 = ["dep:msp430fr6043-pac"]
+msp430fr6043 = ["dep:msp430fr6043-pac", "_fr504x_604x"]
+
+## MSP430FR5043: the same ultrasonic sensing device as the MSP430FR6043 without the segment LCD
+## driver, in a 64-pin package instead of 80. Identical in every other register, so it runs the same
+## drivers; the difference costs about a third less and is easier to buy.
+##
+## About 40 kB of the 64 kB FRAM is reachable — the rest is above 0xFFFF and needs 20-bit addressing
+## that Rust's msp430 target does not have.
+msp430fr5043 = ["dep:msp430fr5043-pac", "_fr504x_604x"]
 
 #! ### Time driver
 
 ## Use Timer_B0 as the `embassy-time` driver. Ticks at 32768 Hz off ACLK, and keeps running in LPM3.
 time-driver-tb0 = ["_time-driver", "embassy-time-driver/tick-hz-32_768"]
 _time-driver = ["dep:embassy-time-driver", "dep:embassy-time-queue-utils"]
+
+#! ### Internal
+## The MSP430FR504x/FR604x family. Set by the chip features above, not by hand: the two devices are
+## register-identical bar the LCD, so everything but the peripheral list is written against this
+## rather than against either chip.
+_fr504x_604x = []
 
 #! ### Logging
 

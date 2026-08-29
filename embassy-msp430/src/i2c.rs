@@ -176,7 +176,7 @@ mod pins {
 ///
 /// See the note in `uart::TxPin`: the alternates are derived from the order of the functions in the
 /// datasheet's package pinout and want checking against Table 7-1.
-#[cfg(feature = "msp430fr6043")]
+#[cfg(feature = "_fr504x_604x")]
 mod pins {
     use super::*;
 

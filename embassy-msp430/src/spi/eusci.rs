@@ -80,9 +80,9 @@ macro_rules! impl_instance {
 
 impl_instance!(EUSCI_A0, INFO_A0, STATW_A);
 impl_instance!(EUSCI_A1, INFO_A1, STATW_A);
-#[cfg(feature = "msp430fr6043")]
+#[cfg(feature = "_fr504x_604x")]
 impl_instance!(EUSCI_A2, INFO_A2, STATW_A);
-#[cfg(feature = "msp430fr6043")]
+#[cfg(feature = "_fr504x_604x")]
 impl_instance!(EUSCI_A3, INFO_A3, STATW_A);
 impl_instance!(EUSCI_B0, INFO_B0, STATW_B);
 impl_instance!(EUSCI_B1, INFO_B1, STATW_B);
@@ -145,7 +145,7 @@ mod pins {
 /// alternate — the parts have more mappings than this, but a set split across two alternates is a
 /// wiring trap rather than a feature. See the note in `uart::TxPin`: the alternates are derived
 /// from the datasheet's pinout ordering and want checking against Table 7-1.
-#[cfg(feature = "msp430fr6043")]
+#[cfg(feature = "_fr504x_604x")]
 mod pins {
     use super::*;
 

@@ -15,7 +15,7 @@ use embassy_sync::waitqueue::AtomicWaker;
 #[cfg(feature = "msp430fr2355")]
 pub(crate) const INSTANCES: usize = 4;
 /// See [`INSTANCES`].
-#[cfg(feature = "msp430fr6043")]
+#[cfg(feature = "_fr504x_604x")]
 pub(crate) const INSTANCES: usize = 6;
 
 /// Two waker slots per instance: one for the receiving half and one for the transmitting half, so
@@ -131,42 +131,42 @@ pub(crate) static INFO_B1: Info = Info {
     idx: 3,
 };
 
-#[cfg(feature = "msp430fr6043")]
+#[cfg(feature = "_fr504x_604x")]
 pub(crate) static INFO_A0: Info = Info {
     base: 0x05c0,
     ie_off: 0x1a,
     ifg_off: 0x1c,
     idx: 0,
 };
-#[cfg(feature = "msp430fr6043")]
+#[cfg(feature = "_fr504x_604x")]
 pub(crate) static INFO_A1: Info = Info {
     base: 0x05e0,
     ie_off: 0x1a,
     ifg_off: 0x1c,
     idx: 1,
 };
-#[cfg(feature = "msp430fr6043")]
+#[cfg(feature = "_fr504x_604x")]
 pub(crate) static INFO_A2: Info = Info {
     base: 0x0600,
     ie_off: 0x1a,
     ifg_off: 0x1c,
     idx: 2,
 };
-#[cfg(feature = "msp430fr6043")]
+#[cfg(feature = "_fr504x_604x")]
 pub(crate) static INFO_A3: Info = Info {
     base: 0x0620,
     ie_off: 0x1a,
     ifg_off: 0x1c,
     idx: 3,
 };
-#[cfg(feature = "msp430fr6043")]
+#[cfg(feature = "_fr504x_604x")]
 pub(crate) static INFO_B0: Info = Info {
     base: 0x0640,
     ie_off: 0x2a,
     ifg_off: 0x2c,
     idx: 4,
 };
-#[cfg(feature = "msp430fr6043")]
+#[cfg(feature = "_fr504x_604x")]
 pub(crate) static INFO_B1: Info = Info {
     base: 0x0680,
     ie_off: 0x2a,
@@ -210,7 +210,7 @@ embassy_executor::msp430_interrupt! {
     }
 }
 
-#[cfg(feature = "msp430fr6043")]
+#[cfg(feature = "_fr504x_604x")]
 embassy_executor::msp430_interrupt! {
     /// eUSCI_A2, in whichever mode it is configured.
     unsafe fn EUSCI_A2() {

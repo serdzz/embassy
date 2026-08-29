@@ -191,7 +191,7 @@ pub(crate) fn init(_cs: CriticalSection) {
     write(CCTL0, 0);
 }
 
-#[cfg(any(feature = "msp430fr2355", feature = "msp430fr6043"))]
+#[cfg(any(feature = "msp430fr2355", feature = "_fr504x_604x"))]
 embassy_executor::msp430_interrupt! {
     /// CCR0 compare match: an `embassy-time` alarm came due.
     unsafe fn TIMER0_B0() {

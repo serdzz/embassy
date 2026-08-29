@@ -1,0 +1,29 @@
+[package]
+name = "msp430fr5043"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Peripheral access API for MSP430FR5043 microcontrollers (generated using svd2rust)"
+categories = ["embedded", "hardware-support", "no-std"]
+keywords = ["msp430", "pac", "svd2rust"]
+repository = "https://github.com/embassy-rs/embassy"
+
+[dependencies]
+critical-section = { version = "1.0", optional = true }
+msp430 = "0.4.0"
+msp430-rt = { version = "0.4.0", optional = true }
+vcell = "0.1.0"
+
+[features]
+rt = ["msp430-rt/device"]
+
+[package.metadata.docs.rs]
+features = ["rt", "critical-section"]
+
+# This crate is 146k lines of generated register accessors, and debug info for it runs to gigabytes
+# without buying anything: nothing here is worth stepping through.
+[profile.dev]
+debug = false
+
+[profile.release]
+debug = false
