@@ -31,6 +31,10 @@ const THRESHOLD: i16 = 400;
 /// can produce.
 const MAX_LAG: i16 = 16;
 
+/// How many samples after the burst to correlate. The first few cycles carry the signal; the tail
+/// is mostly work and noise.
+const WINDOW: usize = 64;
+
 /// A signed decimal, up to six digits and a sign.
 fn dec(value: i32, out: &mut [u8; 8]) -> &[u8] {
     out.fill(b' ');
@@ -88,7 +92,7 @@ async fn main(_spawner: Spawner) {
 
         match uss.capture_pair(Channel::Ch0, &mut buf).await {
             Ok((up, down)) => {
-                match tof::analyse(up, down, &uss_config, THRESHOLD, MAX_LAG) {
+                match tof::analyse(up, down, &uss_config, THRESHOLD, MAX_LAG, WINDOW) {
                     Some(m) => {
                         uart.write(b"dt ").await.unwrap();
                         uart.write(dec(m.delta_t_ps, &mut digits)).await.unwrap();

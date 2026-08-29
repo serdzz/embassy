@@ -244,13 +244,16 @@ pub struct Config {
     pub settling_samples: u8,
 }
 
-impl Default for Config {
+impl Config {
     /// A starting point for a 1 MHz water transducer on an 8 MHz crystal.
     ///
     /// Every one of these is a guess about somebody else's plumbing. Treat it as something that
     /// compiles, not as something that measures.
-    fn default() -> Self {
-        Self {
+    ///
+    /// A constant as well as a [`Default`] so that a caller can build a configuration in a `const`
+    /// context: start from this and assign the fields that differ. The struct is `non_exhaustive`,
+    /// which stops a struct literal but not that.
+    pub const DEFAULT: Config = Config {
             xt_hz: 8_000_000,
             pllm: 19,
             pll_hz: 80_000_000,
@@ -263,11 +266,8 @@ impl Default for Config {
             excitation_bias: ExcitationBias::_0V3,
             pga_bias: PgaBias::_0V80,
             settling_samples: 0,
-        }
-    }
-}
+    };
 
-impl Config {
     /// Samples per second, which is what turns a sample index into a time.
     pub const fn sample_rate_hz(&self) -> u32 {
         self.pll_hz / self.oversampling.ratio()
@@ -279,6 +279,12 @@ impl Config {
     /// nanoseconds, and the whole business of measuring flow is resolving a fraction of that.
     pub const fn sample_period_ps(&self) -> u32 {
         1_000_000_000_000u64.div_ceil(self.sample_rate_hz() as u64) as u32
+    }
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self::DEFAULT
     }
 }
 

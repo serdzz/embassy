@@ -137,6 +137,11 @@ pub fn lag_q8(first: &[i16], second: &[i16], max_lag: i16) -> Option<(i32, i32)>
 /// noise and well below the peak. `max_lag` bounds the search, and should be a little more than the
 /// largest shift the plumbing can produce.
 ///
+/// `window` is how many samples after the burst to correlate, or zero for all of them. It is worth
+/// setting: the correlation is the only expensive arithmetic in a measurement, its cost is the
+/// window times the number of lags, and the samples worth correlating are the first few cycles of
+/// the burst where the signal is strongest. The tail adds work and noise in equal measure.
+///
 /// Returns `None` when the burst was not found in one of the captures, or when the correlation peak
 /// ran to the edge of the search — both of which mean there is no answer here rather than a poor
 /// one.
@@ -146,13 +151,23 @@ pub fn analyse(
     config: &Config,
     threshold: i16,
     max_lag: i16,
+    window: usize,
 ) -> Option<Measurement> {
     let start_first = burst_start(up, threshold)?;
     let start_second = burst_start(down, threshold)?;
 
     // Correlate from the burst onwards rather than over the whole capture: the quiet part before it
-    // is noise, and including it only dilutes the peak.
-    let (lag, quality) = lag_q8(&up[start_first..], &down[start_second..], max_lag)?;
+    // is noise, and including it only dilutes the peak. The window is measured from the burst, not
+    // from the start of the capture — a window from the start could easily end before the burst
+    // begins.
+    let first = &up[start_first..];
+    let second = &down[start_second..];
+    let span = if window == 0 {
+        first.len().min(second.len())
+    } else {
+        window.min(first.len()).min(second.len())
+    };
+    let (lag, quality) = lag_q8(&first[..span], &second[..span], max_lag)?;
 
     // The coarse alignment from the threshold has to go back in — the correlation measured the
     // residual shift after both captures were moved to their own burst.
