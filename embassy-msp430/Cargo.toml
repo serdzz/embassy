@@ -46,6 +46,7 @@ msp430fr2355-pac = { package = "msp430fr2355", version = "0.6.1", features = ["r
 # Not on crates.io; generated and vendored at the repository root.
 msp430f149-pac = { package = "msp430f149", version = "0.1.0", path = "../msp430f149-pac", features = ["rt", "critical-section"], optional = true }
 msp430f2618-pac = { package = "msp430f2618", version = "0.1.0", path = "../msp430f2618-pac", features = ["rt", "critical-section"], optional = true }
+msp430fr6043-pac = { package = "msp430fr6043", version = "0.1.0", path = "../msp430fr6043-pac", features = ["rt", "critical-section"], optional = true }
 
 [features]
 default = []
@@ -69,6 +70,16 @@ msp430f149 = ["dep:msp430f149-pac"]
 ## GPIO, the time driver, the clock system and the watchdog are available. Its USCI serial
 ## peripherals and ADC12 do not have drivers here yet.
 msp430f2618 = ["dep:msp430f2618-pac"]
+
+## MSP430FR6043: the ultrasonic sensing part. 64 kB FRAM and 4 kB SRAM, of which about 40 kB of the
+## FRAM is reachable — the rest is above 0xFFFF and needs 20-bit addressing that Rust's msp430
+## target does not have.
+##
+## GPIO, the time driver, the clock system and the watchdog are available. Nothing else is: its
+## eUSCI serial peripherals, ADC12_B and RTC_C have no drivers here yet, and neither does the
+## ultrasonic front end — SAPH_A, SDHS, UUPS, HSPLL and the LEA accelerator are singletons with no
+## code behind them. See the README on what writing that would involve.
+msp430fr6043 = ["dep:msp430fr6043-pac"]
 
 #! ### Time driver
 

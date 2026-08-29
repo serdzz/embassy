@@ -1,0 +1,33 @@
+[target.msp430-none-elf]
+# The linker is msp430-elf-gcc (the target default), so linker arguments are gcc arguments.
+rustflags = [
+  "-C", "link-arg=-Tlink.x",
+  "-C", "link-arg=-nostartfiles",
+  "-C", "link-arg=-mcpu=msp430",
+  # The CPU cannot multiply or divide, so every `*` and `/` the compiler cannot fold becomes a call
+  # into libgcc, and rustc links a bare-metal target with -nodefaultlibs — so libgcc has to be asked
+  # for by name, or those calls come out as undefined symbols at the very end of the build.
+  #
+  # The multiply helpers live in a separate archive chosen by -mhwmult. `none` picks the software
+  # ones. The parts with a hardware multiplier would be faster with theirs, but it is a peripheral
+  # with shared registers: a multiply inside an interrupt handler corrupts one it interrupted, and
+  # the HAL does multiply inside handlers.
+  "-C", "link-arg=-mhwmult=none",
+  "-C", "link-arg=-lgcc",
+  "-C", "link-arg=-lmul_none",
+]
+
+# Cargo appends the ELF path as the last argument and does not run this through a shell, so one is
+# asked for explicitly: `$0` is that path.
+#
+# Unlike the FR2xx parts, the F149 *is* in mspdebug's own device table, so the drivers that talk to
+# a probe directly work: `uif` for an MSP-FET430UIF, `olimex` for the Olimex tools, `rf2500` for a
+# Launchpad. `tilib` works too if TI's libmsp430 is installed.
+runner = ["sh", "-c", "mspdebug -q tilib \"prog $0\" reset"]
+
+[build]
+target = "msp430-none-elf"
+
+[unstable]
+# msp430-none-elf is a tier 3 target: rustup has no prebuilt `core` for it.
+build-std = ["core"]

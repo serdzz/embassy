@@ -1,0 +1,27 @@
+[package]
+edition = "2024"
+name = "embassy-msp430fr6043-examples"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+embassy-msp430 = { version = "0.1.0", path = "../../embassy-msp430", features = ["msp430fr6043", "time-driver-tb0"] }
+embassy-executor = { version = "0.10.0", path = "../../embassy-executor", features = ["platform-msp430", "executor-thread"] }
+embassy-time = { version = "0.5.1", path = "../../embassy-time", features = ["tick-hz-32_768"] }
+
+msp430-rt = "0.4.1"
+panic-msp430 = "0.4.0"
+static_cell = "2"
+
+[profile.dev]
+codegen-units = 1
+debug = 2
+opt-level = "s"     # About 40 kB of FRAM is reachable and there are 4 kB of RAM. Never build this unoptimized.
+overflow-checks = false
+
+[profile.release]
+codegen-units = 1
+debug = 2
+lto = true
+opt-level = "z"
+overflow-checks = false
