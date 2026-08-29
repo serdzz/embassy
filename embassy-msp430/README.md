@@ -42,15 +42,18 @@ room until that changes.
 | PWM          | Timer_B    | Timer_A/B   | not yet     | Timer_A ×5  | - |
 | ADC          | yes        | ADC12       | not yet     | ADC12_B     | yes |
 | RTC          | yes        | **no hardware** | **no hardware** | RTC_C  | yes |
+| Ultrasonic   | **no hardware** | **no hardware** | **no hardware** | USS    | yes |
 
 "Not yet" is work not done. **No hardware** is not an omission: the F149's USART does UART and SPI
 only — I2C arrived on this family with the F15x/16x — and neither it nor the F2618 has a real-time
 clock at all. Bit-banging I2C on two GPIOs is the usual answer there, and belongs in a driver crate
 rather than here.
 
-The FR6043's ultrasonic front end — `SAPH_A`, `SDHS`, `UUPS`, `HSPLL` and the `LEA` accelerator — is
-not wrapped. Those are peripheral singletons with no code behind them; see
-`examples/msp430fr6043/README.md`.
+The FR6043's ultrasonic front end is driven by `uss`: excite a transducer, capture what the other
+one heard, and correlate two captures into a difference in flight time. It is not TI's Ultrasonic
+Sensing Software Library and does not match its accuracy — read the module docs before believing a
+number it produces. The `LEA` accelerator, which is what that library runs its correlation on, has
+no driver here.
 
 On devices with more peripherals than convenient pins, which eUSCI a pin carries is not the same
 alternate function on every pin that can carry it. The pin traits carry that per pin, so the

@@ -7,6 +7,7 @@ The ultrasonic sensing part, running Embassy.
 | `blinky` | The clock, the time driver, the executor and GPIO — the floor |
 | `uart` | `eUSCI_A0` echoing characters while an LED keeps blinking |
 | `sensors` | ADC12_B, the RTC_C calendar clock and PWM, reporting once a minute and asleep in between |
+| `flow` | The ultrasonic front end: ping both ways, correlate, report the difference in flight time |
 
 ## What it costs
 
@@ -14,13 +15,15 @@ Linked with `cargo build --release`, measured with `msp430-elf-size`:
 
 | | Flash | RAM | of ~40 kB and 4 kB |
 | --- | ---: | ---: | --- |
-| `blinky` | 4 524 B | 348 B | 11% and 8% |
-| `uart` | 5 990 B | 418 B | 15% and 10% |
-| `sensors` | 6 460 B | 410 B | 16% and 10% |
+| `blinky` | 4 680 B | 352 B | 12% and 9% |
+| `uart` | 6 146 B | 422 B | 15% and 10% |
+| `sensors` | 6 616 B | 414 B | 17% and 10% |
+| `flow` | 12 210 B | 1 270 B | 30% and 31% |
 
 So the floor — clock, FRAM wait states, time driver, executor with its low-power sleep, and GPIO —
-is about 4.5 kB, and a program using four drivers is about 6.5 kB. Roughly **34 kB of FRAM is left**
-for an application.
+is about 4.7 kB, and a program using four drivers is about 6.6 kB. A meter that also captures and
+correlates is about 12 kB, most of the RAM being the sample buffer: 400 samples at two bytes each.
+Roughly **28 kB of FRAM is left** on top of `flow`.
 
 Whether that is enough depends entirely on what the application is. For a flow meter it has to hold
 TI's ultrasonic sensing library, the metrology, the display and the comms — worth measuring before
@@ -56,21 +59,22 @@ outright — Table 7-1 — is a graphic in the PDF and could not be read out of 
 been confirmed against it, and none has run on hardware. A wrong alternate does not fail loudly: the
 peripheral simply never reaches the pin. Worth an hour with the datasheet before the first board.
 
-## What is not here
+## The ultrasonic front end
 
-Any driver for the ultrasonic front end. `SAPH_A`, `SDHS`, `UUPS`, `HSPLL` and `LEA` are in the PAC
-and reachable, and they are declared as peripheral singletons so nothing else claims them, but there
-is no code behind them.
+`embassy_msp430::uss` drives all four modules — `UUPS` for the analog supply, `HSPLL` for the fast
+clock, `SAPH_A` for the transducers and the bias, `SDHS` for the converter — and captures a waveform
+straight into memory through the converter's own transfer controller. `uss::tof` correlates two
+captures and interpolates the peak to get a difference in flight time.
 
-That is not an oversight, and it is not a small gap. The registers are the easy part; what makes an
-ultrasonic meter work is the excitation sequence, start-of-frame detection, capturing a thousand
-samples per direction, and the cross-correlation and interpolation that turn those into a
-time-of-flight difference measured in picoseconds — plus temperature compensation and calibration
-against a real flow rig. That is TI's USS library, it runs on the LEA accelerator, and reproducing
-it is a signal-processing project rather than a driver.
+**It is not TI's Ultrasonic Sensing Software Library and will not match it.** That library runs its
+correlation on the `LEA` accelerator, tracks the envelope across temperature, compensates for
+zero-flow drift, and comes with a calibration workflow against a real flow rig; its accuracy claims
+rest on all of that. What is here will show you flow. It will not be right in the third digit, and
+nothing here has been near a transducer.
 
-The realistic options are to link TI's library and keep Rust outside it, or to use an external
-time-to-digital front end on a part with better Rust support.
+Two smaller gaps, both named in the module docs: the factory drive-strength trims are not loaded
+from the `TLV` table, so the output drivers run at reset defaults; and the correlation runs on the
+CPU because there is no `LEA` driver, which costs tens of milliseconds per measurement.
 
 ## Building and flashing
 

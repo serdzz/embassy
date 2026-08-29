@@ -79,9 +79,8 @@ msp430f2618 = ["dep:msp430f2618-pac"]
 ## UART, SPI and I2C on its six eUSCIs, PWM on the five Timer_A instances, the ADC12_B converter and
 ## the RTC_C calendar clock.
 ##
-## What is not is the ultrasonic front end. SAPH_A, SDHS, UUPS, HSPLL and the LEA accelerator are
-## peripheral singletons with no code behind them; see the README on what writing that would
-## involve.
+## The ultrasonic front end is driven too — UUPS, HSPLL, SAPH_A and SDHS — though not to the
+## accuracy of TI's own library; see `uss`. The LEA accelerator has no driver.
 msp430fr6043 = ["dep:msp430fr6043-pac"]
 
 #! ### Time driver

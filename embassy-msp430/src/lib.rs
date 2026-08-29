@@ -72,6 +72,8 @@ pub mod pwm;
 pub mod rtc;
 #[cfg(feature = "msp430fr6043")]
 pub mod rtc_c;
+#[cfg(feature = "msp430fr6043")]
+pub mod uss;
 #[cfg(any(
     feature = "msp430fr2355",
     feature = "msp430f149",
