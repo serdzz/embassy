@@ -172,19 +172,27 @@ mod pins {
     impl SdaPin<peripherals::EUSCI_B1> for peripherals::P4_6 {}
 }
 
-/// Which pins carry I2C on the MSP430FR6043.
+/// Which pins carry I2C on the MSP430FR6043 and MSP430FR5043.
 ///
-/// See the note in `uart::TxPin`: the alternates are derived from the order of the functions in the
-/// datasheet's package pinout and want checking against Table 7-1.
+/// Checked against SLASEF5B Table 9-27, which is the table that settles it: Table 7-1 lists a pin's
+/// signals with the port name floating in the middle of the block, so reading alternates off it is
+/// how the tertiary/secondary mistake below got made in the first place.
 #[cfg(feature = "_fr504x_604x")]
 mod pins {
     use super::*;
 
-    // P1.7/USSTRG/UCA3CLK/UCB0SOMI/UCB0SCL — third alternate, unlike its data line.
+    // P1.7/USSTRG/UCA3CLK/UCB0SOMI/UCB0SCL, RGC64 pin 24.
+    //
+    // Second alternate, the same as its data line. It was third here until the datasheet was
+    // actually opened: `USSTRG` looks like an alternate function and is not one -- SLASEF5B
+    // Table 9-27 lists it as an independent function with no `SEL` encoding of its own, which
+    // leaves `UCA3CLK` primary and `UCB0SOMI/UCB0SCL` secondary. Selecting the third alternate
+    // instead gives the row Table 9-27 marks "N/A -- internally tied to DVSS", so SCL would have
+    // been held low and no I2C transfer could ever have started.
     impl SclPin<peripherals::EUSCI_B0> for peripherals::P1_7 {
-        const ALTERNATE: PinFunction = PinFunction::Alternate3;
+        const ALTERNATE: PinFunction = PinFunction::Alternate2;
     }
-    // P1.6/UCA3STE/UCB0SIMO/UCB0SDA
+    // P1.6/UCA3STE/UCB0SIMO/UCB0SDA, RGC64 pin 23. Second alternate -- SLASEF5B Table 9-27.
     impl SdaPin<peripherals::EUSCI_B0> for peripherals::P1_6 {
         const ALTERNATE: PinFunction = PinFunction::Alternate2;
     }

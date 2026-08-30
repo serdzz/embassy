@@ -160,8 +160,8 @@ mod pins {
     // P5.4/TA0.0/UCB1CLK, P5.5/TA4.1/UCB1SIMO, P5.6/TB0OUTH/UCB1SOMI
     impl_pins!(EUSCI_B1, P5_4, P5_5, P5_6, PinFunction::Alternate2);
 
-    // UCB0 is the exception: its clock and SIMO are second alternates while SOMI is a third, so it
-    // cannot go through the macro.
+    // UCB0 is the exception only in that all three of its lines are second alternates while the
+    // macro's default is the first, so it cannot go through the macro.
     // P1.5/TB0.5/UCB0CLK
     impl SckPin<peripherals::EUSCI_B0> for peripherals::P1_5 {
         const ALTERNATE: PinFunction = PinFunction::Alternate2;
@@ -170,9 +170,10 @@ mod pins {
     impl MosiPin<peripherals::EUSCI_B0> for peripherals::P1_6 {
         const ALTERNATE: PinFunction = PinFunction::Alternate2;
     }
-    // P1.7/USSTRG/UCA3CLK/UCB0SOMI
+    // P1.7/USSTRG/UCA3CLK/UCB0SOMI, RGC64 pin 24. Second alternate, not third: `USSTRG` is an
+    // independent function rather than a `SEL` encoding. See the same correction in `i2c`.
     impl MisoPin<peripherals::EUSCI_B0> for peripherals::P1_7 {
-        const ALTERNATE: PinFunction = PinFunction::Alternate3;
+        const ALTERNATE: PinFunction = PinFunction::Alternate2;
     }
 }
 
