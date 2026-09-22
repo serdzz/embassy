@@ -198,6 +198,7 @@ macro_rules! impl_instance {
 }
 
 impl_instance!(EUSCI_A0, INFO_A0);
+#[cfg(not(feature = "msp430fr4133"))]
 impl_instance!(EUSCI_A1, INFO_A1);
 #[cfg(feature = "_fr504x_604x")]
 impl_instance!(EUSCI_A2, INFO_A2);
@@ -221,6 +222,16 @@ pub trait RxPin<T: Instance>: Pin {
     /// Which alternate function selects this eUSCI on this pin.
     #[doc(hidden)]
     const ALTERNATE: PinFunction = PinFunction::Alternate1;
+}
+
+// P1.0/UCA0TXD/UCA0SIMO, P1.1/UCA0RXD/UCA0SOMI — SLAS865F Table 9-14, first (and only) alternate.
+// This is also the LaunchPad's backchannel UART.
+#[cfg(feature = "msp430fr4133")]
+mod pins {
+    use super::*;
+
+    impl TxPin<peripherals::EUSCI_A0> for peripherals::P1_0 {}
+    impl RxPin<peripherals::EUSCI_A0> for peripherals::P1_1 {}
 }
 
 #[cfg(feature = "msp430fr2355")]

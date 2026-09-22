@@ -213,6 +213,30 @@ embassy_executor::msp430_interrupt! {
     }
 }
 
+// The FR4133 has no Timer_B, so the driver runs on Timer0_A3 — same register layout, same control
+// bits, same TAxIV encodings; only the names of the vectors differ.
+#[cfg(feature = "msp430fr4133")]
+embassy_executor::msp430_interrupt! {
+    /// CCR0 compare match: an `embassy-time` alarm came due.
+    unsafe fn TIMER0_A0() {
+        // CCR0 has its own vector and no entry in the vector register, so its flag has to be
+        // cleared by hand.
+        modify(CCTL0, |v| v & !(CCIFG | CCIE));
+        critical_section::with(|cs| DRIVER.trigger_alarm(cs));
+    }
+
+    /// Counter overflow and CCR1 half-overflow: keeps the 64-bit tick count moving.
+    unsafe fn TIMER0_A1() {
+        // Reading the vector register clears the highest-priority flag it reports. 2 is CCR1, 14
+        // is the counter overflow.
+        // SAFETY: a volatile read of this timer's vector register.
+        match unsafe { (chip::TB0_IV as *mut u16).read_volatile() } {
+            2 | 14 => DRIVER.next_period(),
+            _ => {}
+        }
+    }
+}
+
 #[cfg(any(feature = "msp430f149", feature = "msp430f2618"))]
 embassy_executor::msp430_interrupt! {
     /// CCR0 compare match: an `embassy-time` alarm came due.

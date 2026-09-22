@@ -19,6 +19,8 @@ build = [
     {group = "nightly", target = "msp430-none-elf", features = ["msp430fr2355", "time-driver-tb0"], build-std = ["core"]},
     {group = "nightly", target = "msp430-none-elf", features = ["msp430f149", "time-driver-tb0"], build-std = ["core"]},
     {group = "nightly", target = "msp430-none-elf", features = ["msp430f2618", "time-driver-tb0"], build-std = ["core"]},
+    {group = "nightly", target = "msp430-none-elf", features = ["msp430fr4133", "defmt"], build-std = ["core"]},
+    {group = "nightly", target = "msp430-none-elf", features = ["msp430fr4133", "time-driver-ta0"], build-std = ["core"]},
 ]
 
 [dependencies]
@@ -48,6 +50,8 @@ msp430f149-pac = { package = "msp430f149", version = "0.1.0", path = "../msp430f
 msp430f2618-pac = { package = "msp430f2618", version = "0.1.0", path = "../msp430f2618-pac", features = ["rt", "critical-section"], optional = true }
 msp430fr6043-pac = { package = "msp430fr6043", version = "0.1.0", path = "../msp430fr6043-pac", features = ["rt", "critical-section"], optional = true }
 msp430fr5043-pac = { package = "msp430fr5043", version = "0.1.0", path = "../msp430fr5043-pac", features = ["rt", "critical-section"], optional = true }
+# On crates.io only as an abandoned msp430 0.2-era crate, so generated and vendored like the others.
+msp430fr4133-pac = { package = "msp430fr4133", version = "0.1.0", path = "../msp430fr4133-pac", features = ["rt", "critical-section"], optional = true }
 
 [features]
 default = []
@@ -92,10 +96,22 @@ msp430fr6043 = ["dep:msp430fr6043-pac", "_fr504x_604x"]
 ## that Rust's msp430 target does not have.
 msp430fr5043 = ["dep:msp430fr5043-pac", "_fr504x_604x"]
 
+## MSP430FR4133: 15 kB FRAM, 2 kB SRAM, and the LCD_E segment driver — the MSP-EXP430FR4133
+## LaunchPad part.
+##
+## GPIO, the clock system, the watchdog, UART/SPI on eUSCI_A0, SPI/I2C on eUSCI_B0, PWM on the two
+## Timer_A3 instances, the 10-bit ADC and the 16-bit RTC counter are all available. There is no
+## Timer_B on this device, so the `embassy-time` driver takes Timer0_A3 instead — enable
+## `time-driver-ta0`, not `time-driver-tb0`. The LCD_E controller has no driver yet.
+msp430fr4133 = ["dep:msp430fr4133-pac"]
+
 #! ### Time driver
 
 ## Use Timer_B0 as the `embassy-time` driver. Ticks at 32768 Hz off ACLK, and keeps running in LPM3.
 time-driver-tb0 = ["_time-driver", "embassy-time-driver/tick-hz-32_768"]
+## Use Timer0_A3 as the `embassy-time` driver, for the devices that have no Timer_B (FR4xx).
+## Ticks at 32768 Hz off ACLK, and keeps running in LPM3.
+time-driver-ta0 = ["_time-driver", "embassy-time-driver/tick-hz-32_768"]
 _time-driver = ["dep:embassy-time-driver", "dep:embassy-time-queue-utils"]
 
 #! ### Internal

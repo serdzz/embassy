@@ -142,6 +142,7 @@ macro_rules! impl_instance {
 }
 
 impl_instance!(EUSCI_B0, INFO_B0);
+#[cfg(not(feature = "msp430fr4133"))]
 impl_instance!(EUSCI_B1, INFO_B1);
 
 /// A pin that can be an instance's clock line.
@@ -160,6 +161,15 @@ pub trait SdaPin<T: Instance>: Pin {
     /// Which alternate function selects this eUSCI on this pin.
     #[doc(hidden)]
     const ALTERNATE: PinFunction = PinFunction::Alternate1;
+}
+
+// P5.3/UCB0SOMI/UCB0SCL, P5.2/UCB0SIMO/UCB0SDA — SLAS865F Table 9-18, the only alternate.
+#[cfg(feature = "msp430fr4133")]
+mod pins {
+    use super::*;
+
+    impl SclPin<peripherals::EUSCI_B0> for peripherals::P5_3 {}
+    impl SdaPin<peripherals::EUSCI_B0> for peripherals::P5_2 {}
 }
 
 #[cfg(feature = "msp430fr2355")]

@@ -11,12 +11,15 @@ use embassy_sync::waitqueue::AtomicWaker;
 
 /// Four modules, each with two waker slots. UART hands one to its receive half and one to its
 /// transmit half, so the two can be awaited from separate tasks; SPI and I2C only need the first.
-/// eUSCI instances on this device: four on the FR2355, six on the FR6043.
+/// eUSCI instances on this device: four on the FR2355, six on the FR6043, two on the FR4133.
 #[cfg(feature = "msp430fr2355")]
 pub(crate) const INSTANCES: usize = 4;
 /// See [`INSTANCES`].
 #[cfg(feature = "_fr504x_604x")]
 pub(crate) const INSTANCES: usize = 6;
+/// See [`INSTANCES`].
+#[cfg(feature = "msp430fr4133")]
+pub(crate) const INSTANCES: usize = 2;
 
 /// Two waker slots per instance: one for the receiving half and one for the transmitting half, so
 /// that the two can be awaited from separate tasks.
@@ -174,6 +177,21 @@ pub(crate) static INFO_B1: Info = Info {
     idx: 5,
 };
 
+#[cfg(feature = "msp430fr4133")]
+pub(crate) static INFO_A0: Info = Info {
+    base: 0x0500,
+    ie_off: 0x1a,
+    ifg_off: 0x1c,
+    idx: 0,
+};
+#[cfg(feature = "msp430fr4133")]
+pub(crate) static INFO_B0: Info = Info {
+    base: 0x0540,
+    ie_off: 0x2a,
+    ifg_off: 0x2c,
+    idx: 1,
+};
+
 /// Mask every source that is both enabled and asserted, then wake the module's tasks.
 ///
 /// Masking rather than clearing is what makes this work for all three modes: the flag stays up as
@@ -188,6 +206,7 @@ fn on_irq(info: &'static Info) {
     info.waker(1).wake();
 }
 
+#[cfg(not(feature = "msp430fr4133"))]
 embassy_executor::msp430_interrupt! {
     /// eUSCI_A0, in whichever mode it is configured.
     unsafe fn EUSCI_A0() {
@@ -207,6 +226,20 @@ embassy_executor::msp430_interrupt! {
     /// eUSCI_B1, in whichever mode it is configured.
     unsafe fn EUSCI_B1() {
         on_irq(&INFO_B1);
+    }
+}
+
+// The FR4133 has two modules, and its vector table calls them USCI rather than EUSCI.
+#[cfg(feature = "msp430fr4133")]
+embassy_executor::msp430_interrupt! {
+    /// eUSCI_A0, in whichever mode it is configured.
+    unsafe fn USCI_A0() {
+        on_irq(&INFO_A0);
+    }
+
+    /// eUSCI_B0, in whichever mode it is configured.
+    unsafe fn USCI_B0() {
+        on_irq(&INFO_B0);
     }
 }
 

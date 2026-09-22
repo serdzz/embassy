@@ -17,7 +17,8 @@ pub(crate) mod fmt;
     feature = "msp430f149",
     feature = "msp430f2618",
     feature = "msp430fr6043",
-    feature = "msp430fr5043"
+    feature = "msp430fr5043",
+    feature = "msp430fr4133"
 )))]
 compile_error!("No chip selected. Enable exactly one chip feature, e.g. `msp430fr2355`.");
 
@@ -31,9 +32,23 @@ compile_error!("No chip selected. Enable exactly one chip feature, e.g. `msp430f
     all(feature = "msp430fr2355", feature = "msp430fr5043"),
     all(feature = "msp430f149", feature = "msp430fr5043"),
     all(feature = "msp430f2618", feature = "msp430fr5043"),
-    all(feature = "msp430fr6043", feature = "msp430fr5043")
+    all(feature = "msp430fr6043", feature = "msp430fr5043"),
+    all(feature = "msp430fr4133", feature = "msp430fr2355"),
+    all(feature = "msp430fr4133", feature = "msp430f149"),
+    all(feature = "msp430fr4133", feature = "msp430f2618"),
+    all(feature = "msp430fr4133", feature = "msp430fr6043"),
+    all(feature = "msp430fr4133", feature = "msp430fr5043")
 ))]
 compile_error!("More than one chip feature is enabled. Enable exactly one.");
+
+#[cfg(all(feature = "time-driver-tb0", feature = "msp430fr4133"))]
+compile_error!("The MSP430FR4133 has no Timer_B. Use `time-driver-ta0` instead of `time-driver-tb0`.");
+
+#[cfg(all(feature = "time-driver-ta0", not(feature = "msp430fr4133")))]
+compile_error!("`time-driver-ta0` is for the FR4xx parts; this chip's driver runs on Timer_B0, use `time-driver-tb0`.");
+
+#[cfg(all(feature = "time-driver-tb0", feature = "time-driver-ta0"))]
+compile_error!("Enable at most one time driver feature.");
 
 pub(crate) mod chip;
 
@@ -46,6 +61,9 @@ pub use msp430f2618_pac as pac;
 /// Peripheral access crate for the selected chip.
 #[cfg(feature = "msp430fr2355")]
 pub use msp430fr2355_pac as pac;
+/// Peripheral access crate for the selected chip.
+#[cfg(feature = "msp430fr4133")]
+pub use msp430fr4133_pac as pac;
 /// Peripheral access crate for the selected chip.
 #[cfg(feature = "msp430fr5043")]
 pub use msp430fr5043_pac as pac;
@@ -63,20 +81,30 @@ pub mod wdt;
 #[cfg(any(
     feature = "msp430fr2355",
     feature = "msp430f149",
-    feature = "_fr504x_604x"
+    feature = "_fr504x_604x",
+    feature = "msp430fr4133"
 ))]
 pub mod adc;
-#[cfg(any(feature = "msp430fr2355", feature = "_fr504x_604x"))]
+#[cfg(any(
+    feature = "msp430fr2355",
+    feature = "_fr504x_604x",
+    feature = "msp430fr4133"
+))]
 pub(crate) mod eusci;
-#[cfg(any(feature = "msp430fr2355", feature = "_fr504x_604x"))]
+#[cfg(any(
+    feature = "msp430fr2355",
+    feature = "_fr504x_604x",
+    feature = "msp430fr4133"
+))]
 pub mod i2c;
 #[cfg(any(
     feature = "msp430fr2355",
     feature = "msp430f149",
-    feature = "_fr504x_604x"
+    feature = "_fr504x_604x",
+    feature = "msp430fr4133"
 ))]
 pub mod pwm;
-#[cfg(feature = "msp430fr2355")]
+#[cfg(any(feature = "msp430fr2355", feature = "msp430fr4133"))]
 pub mod rtc;
 #[cfg(feature = "_fr504x_604x")]
 pub mod rtc_c;
@@ -85,13 +113,15 @@ pub mod uss;
 #[cfg(any(
     feature = "msp430fr2355",
     feature = "msp430f149",
-    feature = "_fr504x_604x"
+    feature = "_fr504x_604x",
+    feature = "msp430fr4133"
 ))]
 pub mod spi;
 #[cfg(any(
     feature = "msp430fr2355",
     feature = "msp430f149",
-    feature = "_fr504x_604x"
+    feature = "_fr504x_604x",
+    feature = "msp430fr4133"
 ))]
 pub mod uart;
 #[cfg(feature = "msp430f149")]
@@ -229,6 +259,34 @@ embassy_hal_internal::peripherals! {
     SAPH, SDHS, UUPS, HSPLL, LEA, MTIF,
 }
 
+// The 64-pin LQFP brings out all of P1–P7 and half of P8: P8.0–P8.3 are the only P8 pads bonded on
+// any package of this device.
+#[cfg(feature = "msp430fr4133")]
+embassy_hal_internal::peripherals! {
+    P1_0, P1_1, P1_2, P1_3, P1_4, P1_5, P1_6, P1_7,
+    P2_0, P2_1, P2_2, P2_3, P2_4, P2_5, P2_6, P2_7,
+    P3_0, P3_1, P3_2, P3_3, P3_4, P3_5, P3_6, P3_7,
+    P4_0, P4_1, P4_2, P4_3, P4_4, P4_5, P4_6, P4_7,
+    P5_0, P5_1, P5_2, P5_3, P5_4, P5_5, P5_6, P5_7,
+    P6_0, P6_1, P6_2, P6_3, P6_4, P6_5, P6_6, P6_7,
+    P7_0, P7_1, P7_2, P7_3, P7_4, P7_5, P7_6, P7_7,
+    P8_0, P8_1, P8_2, P8_3,
+
+    // The time driver's timer is missing on purpose: it is not the user's to take. There is no
+    // Timer_B on this device — TA0 is what the driver runs on.
+    #[cfg(not(feature = "time-driver-ta0"))]
+    TA0,
+    TA1,
+
+    EUSCI_A0,
+    EUSCI_B0,
+
+    ADC,
+    RTC,
+    LCD,
+    CRC,
+}
+
 gpio::impl_pin!(P1_0, 0, 0);
 gpio::impl_pin!(P1_1, 0, 1);
 gpio::impl_pin!(P1_2, 0, 2);
@@ -292,49 +350,58 @@ gpio::impl_pin!(P6_6, 5, 6);
 #[cfg(any(
     feature = "msp430f149",
     feature = "msp430f2618",
-    feature = "_fr504x_604x"
+    feature = "_fr504x_604x",
+    feature = "msp430fr4133"
 ))]
 gpio::impl_pin!(P5_5, 4, 5);
 #[cfg(any(
     feature = "msp430f149",
     feature = "msp430f2618",
-    feature = "_fr504x_604x"
+    feature = "_fr504x_604x",
+    feature = "msp430fr4133"
 ))]
 gpio::impl_pin!(P5_6, 4, 6);
 #[cfg(any(
     feature = "msp430f149",
     feature = "msp430f2618",
-    feature = "_fr504x_604x"
+    feature = "_fr504x_604x",
+    feature = "msp430fr4133"
 ))]
 gpio::impl_pin!(P5_7, 4, 7);
-#[cfg(any(feature = "msp430f149", feature = "msp430f2618"))]
-#[cfg(not(feature = "msp430fr5043"))]
-#[cfg(not(feature = "msp430fr5043"))]
+#[cfg(any(
+    feature = "msp430f149",
+    feature = "msp430f2618",
+    feature = "msp430fr4133"
+))]
 gpio::impl_pin!(P6_7, 5, 7);
 
-#[cfg(any(feature = "msp430f2618", feature = "_fr504x_604x"))]
+#[cfg(any(
+    feature = "msp430f2618",
+    feature = "_fr504x_604x",
+    feature = "msp430fr4133"
+))]
 gpio::impl_pin!(P7_0, 6, 0);
-#[cfg(feature = "msp430f2618")]
+#[cfg(any(feature = "msp430f2618", feature = "msp430fr4133"))]
 gpio::impl_pin!(P7_1, 6, 1);
-#[cfg(feature = "msp430f2618")]
+#[cfg(any(feature = "msp430f2618", feature = "msp430fr4133"))]
 gpio::impl_pin!(P7_2, 6, 2);
-#[cfg(feature = "msp430f2618")]
+#[cfg(any(feature = "msp430f2618", feature = "msp430fr4133"))]
 gpio::impl_pin!(P7_3, 6, 3);
-#[cfg(feature = "msp430f2618")]
+#[cfg(any(feature = "msp430f2618", feature = "msp430fr4133"))]
 gpio::impl_pin!(P7_4, 6, 4);
-#[cfg(feature = "msp430f2618")]
+#[cfg(any(feature = "msp430f2618", feature = "msp430fr4133"))]
 gpio::impl_pin!(P7_5, 6, 5);
-#[cfg(feature = "msp430f2618")]
+#[cfg(any(feature = "msp430f2618", feature = "msp430fr4133"))]
 gpio::impl_pin!(P7_6, 6, 6);
-#[cfg(feature = "msp430f2618")]
+#[cfg(any(feature = "msp430f2618", feature = "msp430fr4133"))]
 gpio::impl_pin!(P7_7, 6, 7);
-#[cfg(feature = "msp430f2618")]
+#[cfg(any(feature = "msp430f2618", feature = "msp430fr4133"))]
 gpio::impl_pin!(P8_0, 7, 0);
-#[cfg(feature = "msp430f2618")]
+#[cfg(any(feature = "msp430f2618", feature = "msp430fr4133"))]
 gpio::impl_pin!(P8_1, 7, 1);
-#[cfg(feature = "msp430f2618")]
+#[cfg(any(feature = "msp430f2618", feature = "msp430fr4133"))]
 gpio::impl_pin!(P8_2, 7, 2);
-#[cfg(feature = "msp430f2618")]
+#[cfg(any(feature = "msp430f2618", feature = "msp430fr4133"))]
 gpio::impl_pin!(P8_3, 7, 3);
 #[cfg(feature = "msp430f2618")]
 gpio::impl_pin!(P8_4, 7, 4);
@@ -391,6 +458,12 @@ pub fn init(config: Config) -> Peripherals {
         unsafe { pac::Pmm::steal() }
             .pm5ctl0()
             .modify(|_, w| w.locklpm5().locklpm5_0());
+        // The FR4133 PAC's LOCKLPM5 field carries no enumerated values, so it is a plain bit.
+        #[cfg(feature = "msp430fr4133")]
+        // SAFETY: single volatile write to PM5CTL0.
+        unsafe { pac::Pmm::steal() }
+            .pm5ctl0()
+            .modify(|_, w| w.locklpm5().clear_bit());
 
         #[cfg(feature = "_time-driver")]
         time_driver::init(cs);

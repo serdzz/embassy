@@ -6,6 +6,7 @@
 //! device behind it, and porting code between families means revisiting the configuration.
 
 #[cfg_attr(feature = "msp430fr2355", path = "fr2xx.rs")]
+#[cfg_attr(feature = "msp430fr4133", path = "fr4xx.rs")]
 #[cfg_attr(feature = "msp430f149", path = "adc12.rs")]
 #[cfg_attr(feature = "_fr504x_604x", path = "adc12b.rs")]
 mod device;

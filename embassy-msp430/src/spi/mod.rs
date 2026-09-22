@@ -10,6 +10,7 @@
 
 #[cfg_attr(feature = "msp430fr2355", path = "eusci.rs")]
 #[cfg_attr(feature = "_fr504x_604x", path = "eusci.rs")]
+#[cfg_attr(feature = "msp430fr4133", path = "eusci.rs")]
 #[cfg_attr(feature = "msp430f149", path = "usart.rs")]
 mod device;
 

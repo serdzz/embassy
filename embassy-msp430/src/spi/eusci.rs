@@ -79,12 +79,14 @@ macro_rules! impl_instance {
 }
 
 impl_instance!(EUSCI_A0, INFO_A0, STATW_A);
+#[cfg(not(feature = "msp430fr4133"))]
 impl_instance!(EUSCI_A1, INFO_A1, STATW_A);
 #[cfg(feature = "_fr504x_604x")]
 impl_instance!(EUSCI_A2, INFO_A2, STATW_A);
 #[cfg(feature = "_fr504x_604x")]
 impl_instance!(EUSCI_A3, INFO_A3, STATW_A);
 impl_instance!(EUSCI_B0, INFO_B0, STATW_B);
+#[cfg(not(feature = "msp430fr4133"))]
 impl_instance!(EUSCI_B1, INFO_B1, STATW_B);
 
 /// A pin that can be an instance's clock output.
@@ -127,6 +129,16 @@ macro_rules! impl_pins {
             const ALTERNATE: PinFunction = $alt;
         }
     };
+}
+
+// SLAS865F Tables 9-14 and 9-18: UCA0 is CLK on P1.2, SIMO on P1.0 and SOMI on P1.1; UCB0 is CLK
+// on P5.1, SIMO on P5.2 and SOMI on P5.3. Everything is the single alternate this family has.
+#[cfg(feature = "msp430fr4133")]
+mod pins {
+    use super::*;
+
+    impl_pins!(EUSCI_A0, P1_2, P1_0, P1_1);
+    impl_pins!(EUSCI_B0, P5_1, P5_2, P5_3);
 }
 
 #[cfg(feature = "msp430fr2355")]

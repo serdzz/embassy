@@ -19,7 +19,11 @@ use embassy_sync::waitqueue::AtomicWaker;
 
 use crate::peripherals;
 
+#[cfg(feature = "msp430fr2355")]
 const BASE: u16 = 0x0300;
+/// The FR4133's counter has the same registers at a different address.
+#[cfg(feature = "msp430fr4133")]
+const BASE: u16 = 0x03c0;
 
 // Control register.
 const RTCIFG: u16 = 0x0001;

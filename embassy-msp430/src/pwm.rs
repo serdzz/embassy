@@ -157,6 +157,42 @@ mod instances {
     impl_pin!(TB3, P6_5, 6, PinFunction::Alternate1);
 }
 
+/// The FR4133's two Timer_A3 instances, and which pins their compare outputs reach.
+///
+/// Timer0_A3 is the `embassy-time` driver when `time-driver-ta0` is on, so PWM then comes off TA1
+/// alone. CCR0 sets the period in up mode, and on this device the CCR0 outputs are not bonded out
+/// anyway (SLAS865F Table 9-10), so channels 1 and 2 are all there is: TA0.1 on P1.7, TA0.2 on
+/// P1.6, TA1.1 on P4.0 and TA1.2 on P8.3, each the pin's only alternate.
+#[cfg(feature = "msp430fr4133")]
+mod instances {
+    use super::*;
+
+    impl_instance!(
+        #[cfg(not(feature = "time-driver-ta0"))]
+        TA0,
+        0x0300,
+        true
+    );
+    impl_instance!(TA1, 0x0340, true);
+
+    impl_pin!(
+        #[cfg(not(feature = "time-driver-ta0"))]
+        TA0,
+        P1_7,
+        1,
+        PinFunction::Alternate1
+    );
+    impl_pin!(
+        #[cfg(not(feature = "time-driver-ta0"))]
+        TA0,
+        P1_6,
+        2,
+        PinFunction::Alternate1
+    );
+    impl_pin!(TA1, P4_0, 1, PinFunction::Alternate1);
+    impl_pin!(TA1, P8_3, 2, PinFunction::Alternate1);
+}
+
 #[cfg(feature = "msp430f149")]
 mod instances {
     use super::*;

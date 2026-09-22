@@ -14,12 +14,14 @@
 #[cfg_attr(feature = "msp430f149", path = "f149.rs")]
 #[cfg_attr(feature = "msp430f2618", path = "f2618.rs")]
 #[cfg_attr(feature = "_fr504x_604x", path = "fr504x_604x.rs")]
+#[cfg_attr(feature = "msp430fr4133", path = "fr4133.rs")]
 mod device;
 
 pub(crate) use device::*;
 
 /// A register every port has, whatever the family.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(crate) enum PortReg {
     /// Pin state.
     In,
