@@ -194,6 +194,16 @@ impl Lcd {
         }
     }
 
+    /// Show a `NUM_CHARS`-wide window of `text` starting at `offset` (characters, not bytes;
+    /// `text` should be ASCII). Positions past the end of `text` show as spaces — this is the
+    /// building block for scrolling: the caller only needs to walk `offset` up or down over time.
+    pub fn show_window(&mut self, text: &str, offset: usize) {
+        for position in 0..NUM_CHARS {
+            let c = text.chars().nth(offset + position).unwrap_or(' ');
+            self.show_char(c, position);
+        }
+    }
+
     /// `LCDMEM` is byte-addressed but the PAC only exposes it as 16-bit `LCDMxW` word registers
     /// (`LCDM0W` covers bytes 0/1, `LCDM2W` covers 2/3, ...). Reconstruct byte access on top: read
     /// the containing word, and keep the other byte unchanged on write.
