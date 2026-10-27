@@ -1,0 +1,25 @@
+[package]
+edition = "2024"
+name = "embassy-nrf52832-examples"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+embassy-executor = { version = "0.10.0", path = "../../embassy-executor", features = ["platform-cortex-m", "executor-thread"] }
+embassy-time = { version = "0.5.1", path = "../../embassy-time" }
+embassy-nrf = { version = "0.10.0", path = "../../embassy-nrf", features = ["nrf52832", "time-driver-rtc1", "gpiote", "time"] }
+
+cortex-m = { version = "0.7.6", features = ["inline-asm", "critical-section-single-core"] }
+# The application sits at 0x26000, behind the MBR and the SoftDevice. `set-vtor` points VTOR at our
+# own vector table on reset, so interrupts do not depend on the SoftDevice's forwarding.
+cortex-m-rt = { version = "0.7.0", features = ["set-vtor"] }
+panic-halt = "1.0.0"
+
+[profile.release]
+debug = 2
+
+[package.metadata.embassy]
+build = [
+  { target = "thumbv7em-none-eabihf", artifact-dir = "out/examples/nrf52832" }
+]

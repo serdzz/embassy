@@ -1,0 +1,6 @@
+[target.'cfg(all(target_arch = "arm", target_os = "none"))']
+# Flashes over the serial bootloader with adafruit-nrfutil; see flash.sh.
+runner = "./flash.sh"
+
+[build]
+target = "thumbv7em-none-eabihf"
