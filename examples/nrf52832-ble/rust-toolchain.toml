@@ -1,0 +1,4 @@
+# nrf-softdevice needs `fixed` 1.31, which needs a newer compiler than the 1.92 the repository pins.
+[toolchain]
+channel = "stable"
+targets = ["thumbv7em-none-eabihf"]
