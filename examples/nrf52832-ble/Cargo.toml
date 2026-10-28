@@ -15,13 +15,14 @@ embassy-futures = { version = "0.1.2", path = "../../embassy-futures" }
 # The bindings are generated from S132 7.0.1 headers. The board ships with S132 6.1.1, whose API is the
 # same minus a few calls and config IDs added in 7.0 (connection event triggers, PPCP/CAR inclusion
 # config), which these examples do not use.
-nrf-softdevice = { git = "https://github.com/embassy-rs/nrf-softdevice", rev = "b0ac850c0a5a05b8a5aef4f752b48115755b8542", features = ["nrf52832", "s132", "ble-peripheral", "ble-gatt-server", "critical-section-impl"] }
+nrf-softdevice = { git = "https://github.com/embassy-rs/nrf-softdevice", rev = "b0ac850c0a5a05b8a5aef4f752b48115755b8542", features = ["nrf52832", "s132", "ble-peripheral", "ble-gatt-server", "critical-section-impl", "evt-max-size-512"] }
 
 # No `critical-section-single-core`: nrf-softdevice provides the critical section, built on the
 # SoftDevice's own interrupt masking.
 cortex-m = { version = "0.7.6", features = ["inline-asm"] }
 cortex-m-rt = "0.7.0"
 heapless = "0.9"
+embedded-io-async = "0.7"
 
 [patch.crates-io]
 # nrf-softdevice depends on embassy-sync from crates.io; use this repository's copy instead.
