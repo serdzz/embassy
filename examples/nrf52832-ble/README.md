@@ -6,7 +6,7 @@ using the S132 SoftDevice that the Adafruit bootloader already keeps in flash. F
 
 | Example          | What it does                                                                 |
 |------------------|------------------------------------------------------------------------------|
-| `ble_peripheral` | Advertises as `Feather-Rust`, serves the Battery Service (the LiPo's charge, measured on A7 by `src/battery.rs`), an LED service (write `1`/`0` to `6e400101-b5a3-f393-e0a9-e50e24dcca9e` to switch the red LED; write colours to `6e400102-…` for a WS2812B ring, see below), and DFU over BLE. |
+| `ble_peripheral` | Advertises as `Feather-Rust`, serves the Battery Service (the LiPo's charge, measured on A7 by `src/battery.rs`), an LED service (write `1`/`0` to `6e400101-b5a3-f393-e0a9-e50e24dcca9e` to switch the red LED; colours and effects for a WS2812B ring, see below), and DFU over BLE. |
 | `ble_proxy`      | Advertises as `Feather-Proxy` and fetches http://example.com/ every 30 seconds through `ble_gateway.py`, which relays TCP connections for it. Also DFU over BLE. |
 
 ```sh
@@ -23,12 +23,43 @@ generates the bit timing with PWM and EasyDMA. Wire the ring's `DI` (not `DO`) t
 `GND`, and its supply to `3V`. At 5 V (the `USB` pin) the ring wants at least 3.5 V on `DI`, which
 the nRF52's 3.3 V output does not guarantee; use a level shifter such as a 74AHCT125 there.
 
-Write the colours to `6e400102-b5a3-f393-e0a9-e50e24dcca9e`: 3 bytes `R G B` for the whole ring,
-or 24 bytes for one colour per LED, starting at the LED next to `DI`. In nRF Connect, for example,
-write `FF0000` for red. The single byte `01` starts Rainbow FTB, a dot running round the ring
-through the colours of the rainbow with its trail fading to black; writing a colour stops it.
-Brightness is capped at a quarter (`MAX_BRIGHTNESS`), which keeps the ring's current well below
-what the Feather's regulator supplies.
+Two characteristics of the LED service control it:
+
+- `6e400102-b5a3-f393-e0a9-e50e24dcca9e` takes colours: 3 bytes `R G B` for the whole ring, or 24
+  bytes for one colour per LED, starting at the LED next to `DI`;
+- `6e400103-b5a3-f393-e0a9-e50e24dcca9e` takes commands: `id` or `id R G B` starts an effect in
+  its own or the given colour, `80 level` sets the brightness and `81 speed` the speed of the
+  effects (100 is normal, 200 twice as fast).
+
+| id   | Effect          |                                                                   |
+|------|-----------------|-------------------------------------------------------------------|
+| `00` | off             |                                                                   |
+| `01` | solid           | the whole ring in one colour                                      |
+| `02` | rainbow FTB     | a dot running round through the rainbow, its trail fading to black |
+| `03` | rainbow         | the rainbow spread round the ring, turning                        |
+| `04` | rainbow cycle   | the whole ring going through the rainbow                          |
+| `05` | breathe         | the colour fading in and out                                      |
+| `06` | comet           | a dot of the colour with a fading tail                            |
+| `07` | theater chase   | every fourth LED lit, moving round                                |
+| `08` | color wipe      | the ring filling with the colour and emptying again               |
+| `09` | sparkle         | LEDs flashing up at random and fading                             |
+| `0a` | fire            | flickering orange and red                                         |
+| `0b` | police          | red and blue double flashes                                       |
+| `0c` | scanner         | a dot going back and forth with a fading tail                     |
+| `0d` | strobe          | short flashes of the colour                                       |
+
+In nRF Connect, for example, write `FF0000` to the first for red, or `06 FF00FF` to the second for
+a magenta comet. From a computer, `neopixel.py` does the same by name:
+
+```sh
+python3 neopixel.py fire
+python3 neopixel.py brightness 255 + speed 150 + comet ff00ff
+python3 neopixel.py color ff0000 ff8000 ffff00 00ff00 00ffff 0000ff 8000ff ff00ff
+python3 neopixel.py demo    # every effect for 5 seconds
+```
+
+Brightness is capped at a quarter (`MAX_BRIGHTNESS`, which brightness 255 maps to), keeping the
+ring's current well below what the Feather's regulator supplies.
 
 ## Internet over BLE
 

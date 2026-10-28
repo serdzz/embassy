@@ -2,10 +2,9 @@
 //!
 //! - the Battery Service (0x180F), with the charge of the LiPo measured on A7 (see `battery.rs`),
 //!   notified when it changes;
-//! - an LED service: write 1/0 to its first characteristic to turn the red LED on/off, and colours
-//!   to its second to light a ring of 8 WS2812B LEDs whose data input is on pin 7 (P0.07): 3 bytes
-//!   (R, G, B) for the whole ring, 24 for one colour per LED, or the single byte 1 for the Rainbow
-//!   FTB effect (see `neopixel.rs`);
+//! - an LED service: write 1/0 to its first characteristic to turn the red LED on/off; the other
+//!   two control a ring of 8 WS2812B LEDs whose data input is on pin 7 (P0.07), one taking colours
+//!   and the other effects, brightness and speed (see `neopixel.rs`);
 //! - Nordic's legacy DFU service, to update the firmware over BLE (see `dfu.rs`).
 //!
 //! Progress is logged on the USB serial port at 115200.
@@ -54,6 +53,8 @@ struct LedService {
     led: u8,
     #[characteristic(uuid = "6e400102-b5a3-f393-e0a9-e50e24dcca9e", write)]
     pixels: Vec<u8, { 3 * neopixel::NUM_LEDS }>,
+    #[characteristic(uuid = "6e400103-b5a3-f393-e0a9-e50e24dcca9e", write)]
+    effect: Vec<u8, 4>,
 }
 
 #[nrf_softdevice::gatt_server]
@@ -76,6 +77,17 @@ async fn neopixel_task(pwm: Peri<'static, peripherals::PWM0>, pin: Peri<'static,
 #[embassy_executor::task]
 async fn battery_measure_task(adc: Peri<'static, peripherals::SAADC>, pin: Peri<'static, peripherals::P0_31>) -> ! {
     battery::run(adc, pin).await
+}
+
+fn ring_command(command: Option<neopixel::Command>) {
+    match command {
+        Some(command) => {
+            if neopixel::COMMANDS.try_send(command).is_err() {
+                log!("ring: too many commands, dropped one");
+            }
+        }
+        None => log!("ring: not a command"),
+    }
 }
 
 /// Notifies the battery level when it changes, for as long as the connection lasts.
@@ -185,16 +197,17 @@ async fn main(spawner: Spawner) {
                 led.set_level(if v != 0 { Level::High } else { Level::Low });
             }
             ServerEvent::Led(LedServiceEvent::PixelsWrite(v)) => {
-                if neopixel::command_from_bytes(&v) {
-                    // 24 bytes would not fit a log line.
-                    log!(
-                        "pixels: {:02x?}{}",
-                        &v[..v.len().min(3)],
-                        if v.len() > 3 { " ..." } else { "" }
-                    );
-                } else {
-                    log!("pixels: {} bytes, expected 1, 3 or {}", v.len(), 3 * neopixel::NUM_LEDS);
-                }
+                // 24 bytes would not fit a log line.
+                log!(
+                    "pixels: {:02x?}{}",
+                    &v[..v.len().min(3)],
+                    if v.len() > 3 { " ..." } else { "" }
+                );
+                ring_command(neopixel::colors_command(&v));
+            }
+            ServerEvent::Led(LedServiceEvent::EffectWrite(v)) => {
+                log!("effect: {:02x?}", &v[..]);
+                ring_command(neopixel::control_command(&v));
             }
             ServerEvent::Dfu(e) => dfu::on_event(e),
         });
