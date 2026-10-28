@@ -1,7 +1,11 @@
 //! BLE peripheral on the SoftDevice: advertises as "Feather-Rust" and serves
 //!
-//! - the Battery Service (0x180F), with a battery level that counts down and is notified every second;
-//! - an LED service: write 1/0 to its characteristic to turn the red LED on/off;
+//! - the Battery Service (0x180F), with the charge of the LiPo measured on A7 (see `battery.rs`),
+//!   notified when it changes;
+//! - an LED service: write 1/0 to its first characteristic to turn the red LED on/off, and colours
+//!   to its second to light a ring of 8 WS2812B LEDs whose data input is on pin 7 (P0.07): 3 bytes
+//!   (R, G, B) for the whole ring, 24 for one colour per LED, or the single byte 1 for the Rainbow
+//!   FTB effect (see `neopixel.rs`);
 //! - Nordic's legacy DFU service, to update the firmware over BLE (see `dfu.rs`).
 //!
 //! Progress is logged on the USB serial port at 115200.
@@ -12,17 +16,24 @@
 #[macro_use]
 #[path = "../serial.rs"]
 mod serial;
+#[path = "../battery.rs"]
+mod battery;
 #[path = "../dfu.rs"]
 mod dfu;
+#[path = "../neopixel.rs"]
+mod neopixel;
 
 use core::mem;
+use core::sync::atomic::Ordering;
 
 use dfu::{DfuService, DfuServiceEvent};
 use embassy_executor::Spawner;
 use embassy_futures::select::{Either3, select3};
 use embassy_nrf::gpio::{Level, Output, OutputDrive};
 use embassy_nrf::interrupt::Priority;
+use embassy_nrf::{Peri, peripherals};
 use embassy_time::Timer;
+use heapless::Vec;
 use nrf_softdevice::ble::advertisement_builder::{
     Flag, LegacyAdvertisementBuilder, LegacyAdvertisementPayload, ServiceList, ServiceUuid16,
 };
@@ -41,6 +52,8 @@ struct BatteryService {
 struct LedService {
     #[characteristic(uuid = "6e400101-b5a3-f393-e0a9-e50e24dcca9e", read, write)]
     led: u8,
+    #[characteristic(uuid = "6e400102-b5a3-f393-e0a9-e50e24dcca9e", write)]
+    pixels: Vec<u8, { 3 * neopixel::NUM_LEDS }>,
 }
 
 #[nrf_softdevice::gatt_server]
@@ -55,14 +68,30 @@ async fn softdevice_task(sd: &'static Softdevice) -> ! {
     sd.run().await
 }
 
-/// Notifies a falling battery level once a second, for as long as the connection lasts.
+#[embassy_executor::task]
+async fn neopixel_task(pwm: Peri<'static, peripherals::PWM0>, pin: Peri<'static, peripherals::P0_07>) -> ! {
+    neopixel::run(pwm, pin).await
+}
+
+#[embassy_executor::task]
+async fn battery_measure_task(adc: Peri<'static, peripherals::SAADC>, pin: Peri<'static, peripherals::P0_31>) -> ! {
+    battery::run(adc, pin).await
+}
+
+/// Notifies the battery level when it changes, for as long as the connection lasts.
 async fn battery_task(server: &Server, conn: &Connection) {
-    let mut level = 100u8;
+    let mut sent = server.bas.battery_level_get().unwrap_or(0);
     loop {
         Timer::after_secs(1).await;
-        level = if level == 0 { 100 } else { level - 1 };
-        // Errors here just mean the central has not enabled notifications.
-        let _ = server.bas.battery_level_notify(conn, &level);
+        let level = battery::PERCENT.load(Ordering::Relaxed);
+        if level != sent {
+            sent = level;
+            // Errors here just mean the central has not enabled notifications; reads still see
+            // the new value.
+            if server.bas.battery_level_notify(conn, &level).is_err() {
+                let _ = server.bas.battery_level_set(&level);
+            }
+        }
     }
 }
 
@@ -78,6 +107,8 @@ async fn main(spawner: Spawner) {
     log!("nrf52832-ble: starting SoftDevice");
 
     let mut led = Output::new(p.P0_17, Level::Low, OutputDrive::Standard);
+    spawner.spawn(neopixel_task(p.PWM0, p.P0_07).unwrap());
+    spawner.spawn(battery_measure_task(p.SAADC, p.P0_31).unwrap());
 
     let sd_config = nrf_softdevice::Config {
         // The Feather has a 32.768 kHz crystal.
@@ -143,6 +174,7 @@ async fn main(spawner: Spawner) {
             }
         };
         log!("connected");
+        let _ = server.bas.battery_level_set(&battery::PERCENT.load(Ordering::Relaxed));
 
         let gatt = gatt_server::run(&conn, &server, |e| match e {
             ServerEvent::Bas(BatteryServiceEvent::BatteryLevelCccdWrite { notifications }) => {
@@ -151,6 +183,18 @@ async fn main(spawner: Spawner) {
             ServerEvent::Led(LedServiceEvent::LedWrite(v)) => {
                 log!("led: {}", v);
                 led.set_level(if v != 0 { Level::High } else { Level::Low });
+            }
+            ServerEvent::Led(LedServiceEvent::PixelsWrite(v)) => {
+                if neopixel::command_from_bytes(&v) {
+                    // 24 bytes would not fit a log line.
+                    log!(
+                        "pixels: {:02x?}{}",
+                        &v[..v.len().min(3)],
+                        if v.len() > 3 { " ..." } else { "" }
+                    );
+                } else {
+                    log!("pixels: {} bytes, expected 1, 3 or {}", v.len(), 3 * neopixel::NUM_LEDS);
+                }
             }
             ServerEvent::Dfu(e) => dfu::on_event(e),
         });

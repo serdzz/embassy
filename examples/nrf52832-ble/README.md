@@ -6,7 +6,7 @@ using the S132 SoftDevice that the Adafruit bootloader already keeps in flash. F
 
 | Example          | What it does                                                                 |
 |------------------|------------------------------------------------------------------------------|
-| `ble_peripheral` | Advertises as `Feather-Rust`, serves the Battery Service (level notified every second), an LED service (write `1`/`0` to `6e400101-b5a3-f393-e0a9-e50e24dcca9e` to switch the red LED), and DFU over BLE. |
+| `ble_peripheral` | Advertises as `Feather-Rust`, serves the Battery Service (the LiPo's charge, measured on A7 by `src/battery.rs`), an LED service (write `1`/`0` to `6e400101-b5a3-f393-e0a9-e50e24dcca9e` to switch the red LED; write colours to `6e400102-…` for a WS2812B ring, see below), and DFU over BLE. |
 | `ble_proxy`      | Advertises as `Feather-Proxy` and fetches http://example.com/ every 30 seconds through `ble_gateway.py`, which relays TCP connections for it. Also DFU over BLE. |
 
 ```sh
@@ -15,6 +15,20 @@ cargo run --release --bin ble_peripheral
 
 Then connect with a BLE app such as nRF Connect. Progress is logged on the USB serial port at
 115200, and so are panics.
+
+## WS2812B (NeoPixel) ring
+
+`ble_peripheral` drives a ring of 8 WS2812B LEDs from PWM0 on pin 7 (P0.07); `src/neopixel.rs`
+generates the bit timing with PWM and EasyDMA. Wire the ring's `DI` (not `DO`) to pin 7, `GND` to
+`GND`, and its supply to `3V`. At 5 V (the `USB` pin) the ring wants at least 3.5 V on `DI`, which
+the nRF52's 3.3 V output does not guarantee; use a level shifter such as a 74AHCT125 there.
+
+Write the colours to `6e400102-b5a3-f393-e0a9-e50e24dcca9e`: 3 bytes `R G B` for the whole ring,
+or 24 bytes for one colour per LED, starting at the LED next to `DI`. In nRF Connect, for example,
+write `FF0000` for red. The single byte `01` starts Rainbow FTB, a dot running round the ring
+through the colours of the rainbow with its trail fading to black; writing a colour stops it.
+Brightness is capped at a quarter (`MAX_BRIGHTNESS`), which keeps the ring's current well below
+what the Feather's regulator supplies.
 
 ## Internet over BLE
 
