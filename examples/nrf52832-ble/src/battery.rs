@@ -34,9 +34,13 @@ const CURVE: [(u16, u8); 11] = [
     (3870, 60),
     (3950, 70),
     (4020, 80),
-    (4110, 90),
+    (4100, 90),
 ];
-const FULL_MV: u16 = 4200;
+/// Observed open-circuit voltage right after the ETA6096 ends CV charging
+/// and cuts off: the pack relaxes from its ~4.2 V regulation point down to
+/// here, so this (not 4200) is what "fully charged" actually reads as on
+/// this board/battery (measured: 4137 mV at 93% before this fix).
+const FULL_MV: u16 = 4140;
 
 /// Remaining charge for a battery voltage, interpolated between the points of [`CURVE`].
 pub fn percent(mv: u16) -> u8 {
