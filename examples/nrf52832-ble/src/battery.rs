@@ -42,6 +42,9 @@ const CURVE: [(u16, u8); 11] = [
 /// this board/battery (measured: 4137 mV at 93% before this fix).
 const FULL_MV: u16 = 4140;
 
+/// How far the voltage has to move past a step before the reported level follows it.
+const HYSTERESIS_MV: u16 = 10;
+
 /// Remaining charge for a battery voltage, interpolated between the points of [`CURVE`].
 pub fn percent(mv: u16) -> u8 {
     let mut prev = (CURVE[0].0, CURVE[0].1);
@@ -72,25 +75,38 @@ pub async fn run(adc: Peri<'static, peripherals::SAADC>, pin: Peri<'static, peri
     // The first conversion after calibration reads close to zero; drop it.
     adc.sample(&mut [0; 1]).await;
 
-    let mut filtered: Option<u32> = None;
-    let mut first = true;
+    // In mV × 16, so the filter does not lose the fractions.
+    let mut filtered: Option<i32> = None;
+    let mut reported: Option<u8> = None;
     loop {
         let mut buf = [0i16; 1];
         adc.sample(&mut buf).await;
         let raw = buf[0].max(0) as u32;
-        let mv = raw * 3600 / 4096 * DIVIDER_X1000 / 1000;
-        // Smooth out the dips from radio bursts and LEDs: 1/4 of each new reading.
-        let mv = match filtered {
-            None => mv,
-            Some(f) => (f * 3 + mv) / 4,
+        let mv = (raw * 3600 / 4096 * DIVIDER_X1000 / 1000) as i32;
+        // The voltage dips with every radio burst and with the ring's current: take 1/16 of each
+        // new reading, which at one reading every 2 s averages over about half a minute.
+        let f = match filtered {
+            None => mv * 16,
+            Some(f) => f + (mv * 16 - f) / 16,
         };
-        filtered = Some(mv);
-        MILLIVOLTS.store(mv as u16, Ordering::Relaxed);
-        let level = percent(mv as u16);
-        if PERCENT.swap(level, Ordering::Relaxed) != level || first {
+        filtered = Some(f);
+        let mv = (f / 16) as u16;
+        MILLIVOLTS.store(mv, Ordering::Relaxed);
+
+        // Around 80-90 % one percent is only about 8 mV. Move the reported level only once the
+        // voltage is HYSTERESIS_MV past the point where it would change, so it does not flip
+        // between neighbours.
+        let level = match reported {
+            Some(r) if percent(mv) > r => percent(mv.saturating_sub(HYSTERESIS_MV)).max(r),
+            Some(r) if percent(mv) < r => percent(mv + HYSTERESIS_MV).min(r),
+            Some(r) => r,
+            None => percent(mv),
+        };
+        if reported != Some(level) {
             log!("battery: {} mV, {}%", mv, level);
+            reported = Some(level);
+            PERCENT.store(level, Ordering::Relaxed);
         }
-        first = false;
         Timer::after_secs(2).await;
     }
 }
