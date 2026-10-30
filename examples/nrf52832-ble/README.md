@@ -8,6 +8,7 @@ using the S132 SoftDevice that the Adafruit bootloader already keeps in flash. F
 |------------------|------------------------------------------------------------------------------|
 | `ble_peripheral` | Advertises as `Feather-Rust`, serves the Battery Service (the LiPo's charge, measured on A7 by `src/battery.rs`), an LED service (write `1`/`0` to `6e400101-b5a3-f393-e0a9-e50e24dcca9e` to switch the red LED; colours and effects for a WS2812B ring, see below), and DFU over BLE. |
 | `ble_proxy`      | Advertises as `Feather-Proxy` and fetches http://example.com/ every 30 seconds through `ble_gateway.py`, which relays TCP connections for it. Also DFU over BLE. |
+| `blazepod`       | BlazePod-style reaction trainer: multiple pods synchronise a round over non-connectable BLE broadcasts (no pairing/connection between pods), light their rings at the same moment, and the first button press wins — see below. |
 
 ```sh
 cargo run --release --bin ble_peripheral
@@ -134,6 +135,36 @@ Events carrying a full 244-byte write do not fit nrf-softdevice's default event 
 
 SoftDevice rules that apply here: interrupt priorities 0, 1 and 4 are reserved (the examples use 2
 and 3), and RTC0, TIMER0, RADIO, and parts of CLOCK and POWER belong to the SoftDevice.
+
+## BlazePod (`blazepod`)
+
+Each pod runs `cargo run --release --bin blazepod` and needs its own ring + a tactile button
+wired to P0.02 (one leg to GND, the other to P0.02; `Pull::Up` is set in software, so no external
+pull-up resistor needed). Flash as many boards as you want pods — they find each other over the
+air, no pairing or per-pod configuration.
+
+**How a round works:** any pod's button press starts a round — it picks a random 0.8-3.0 s delay
+and a colour, then broadcasts both (as a non-connectable BLE advertisement) so every pod in range
+lights its ring at the same moment and starts its own reaction timer. First button press anywhere
+broadcasts the win; every pod shows that colour, with more LEDs lit the faster the reaction, then
+resets to idle after 2 seconds. A round nobody reacts to within 5 s times out back to idle.
+
+**Why BLE broadcasts, not a BLE connection between pods:** `nrf-softdevice`'s GATT client/server is
+built for one phone talking to one pod, not N pods all needing the same start signal within a few
+milliseconds — see the module doc comment at the top of `src/bin/blazepod.rs` for the full
+rationale (and its honest caveats: an unregistered manufacturer ID in the advertisement payload,
+and "ms from the broadcaster's own clock" rather than true wall-clock sync, both fine for a
+reaction game, not fine to ship as-is in a real product).
+
+Each pod **also** still advertises connectably as `BlazePod-Rust` with the Battery Service and DFU
+over BLE (same services as `ble_peripheral`), on top of the broadcast game traffic — so you can
+check battery level or push a firmware update from a phone the same way, without interfering with
+the game signalling.
+
+Not yet implemented: a "spectator"/phone app that logs reaction times across rounds (the pods
+currently only show results on their own LED rings and the USB serial log), and any way to
+configure which pods belong to the same game session if you're running two separate groups within
+radio range of each other (right now ALL pods in range join every round).
 
 ## Toolchain
 
