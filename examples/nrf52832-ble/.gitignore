@@ -1,0 +1,2 @@
+# OpenHaystack key material — contains the private key, never commit
+*.keys

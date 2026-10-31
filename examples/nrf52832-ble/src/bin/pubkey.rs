@@ -75,9 +75,18 @@ const fn hex_nibble(b: u8) -> u8 {
 /// reversed on the air; this hasn't been checked against a real capture,
 /// only against the reference C source's byte order.
 pub fn ble_address() -> [u8; 6] {
+    // nrf-softdevice's `Address` bytes are little-endian (`[0]` = LSB, `[5]` = MSB),
+    // and a RandomStatic address must have its two most-significant bits (top of the
+    // MSB, i.e. `[5]`) set to `11`. OpenHaystack's address *value* is `PUBLIC_KEY[0..6]`
+    // big-endian with `PUBLIC_KEY[0]`'s top two bits forced to `11`. So reverse the six
+    // key bytes into the little-endian array and set the top bits on the MSB (`addr[5]`).
     let mut addr = [0u8; 6];
-    addr.copy_from_slice(&PUBLIC_KEY[0..6]);
-    addr[0] |= 0b1100_0000;
+    addr[0] = PUBLIC_KEY[5];
+    addr[1] = PUBLIC_KEY[4];
+    addr[2] = PUBLIC_KEY[3];
+    addr[3] = PUBLIC_KEY[2];
+    addr[4] = PUBLIC_KEY[1];
+    addr[5] = PUBLIC_KEY[0] | 0b1100_0000;
     addr
 }
 

@@ -119,7 +119,7 @@ async fn main(spawner: Spawner) {
         // left at Default::default() (SoftDevice's minimum) rather than
         // requesting peripheral/central roles this firmware never uses.
         gap_device_name: Some(raw::ble_gap_cfg_device_name_t {
-            p_value: b"".as_ptr() as _,
+            p_value: core::ptr::null_mut(),
             current_len: 0,
             max_len: 0,
             write_perm: unsafe { mem::zeroed() },
