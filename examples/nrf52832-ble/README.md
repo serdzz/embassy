@@ -9,6 +9,7 @@ using the S132 SoftDevice that the Adafruit bootloader already keeps in flash. F
 | `ble_peripheral` | Advertises as `Feather-Rust`, serves the Battery Service (the LiPo's charge, measured on A7 by `src/battery.rs`), an LED service (write `1`/`0` to `6e400101-b5a3-f393-e0a9-e50e24dcca9e` to switch the red LED; colours and effects for a WS2812B ring, see below), and DFU over BLE. |
 | `ble_proxy`      | Advertises as `Feather-Proxy` and fetches http://example.com/ every 30 seconds through `ble_gateway.py`, which relays TCP connections for it. Also DFU over BLE. |
 | `blazepod`       | BlazePod-style reaction trainer: multiple pods synchronise a round over non-connectable BLE broadcasts (no pairing/connection between pods), light their rings at the same moment, and the first button press wins — see below. |
+| `airtag`         | Broadcasts an OpenHaystack-compatible Apple Find My "Offline Finding" advertisement — turns the board into a trackable-via-any-nearby-iPhone tag, decoded on a Mac with the matching private key. No GATT, no connections, broadcast-and-sleep for low power — see below. |
 
 ```sh
 cargo run --release --bin ble_peripheral
@@ -165,6 +166,47 @@ Not yet implemented: a "spectator"/phone app that logs reaction times across rou
 currently only show results on their own LED rings and the USB serial log), and any way to
 configure which pods belong to the same game session if you're running two separate groups within
 radio range of each other (right now ALL pods in range join every round).
+
+## AirTag (`airtag`)
+
+Turns the board into an [OpenHaystack](https://github.com/seemoo-lab/openhaystack)-compatible
+tracker: it broadcasts Apple's reverse-engineered "Offline Finding" BLE advertisement, which ANY
+nearby iPhone with Find My enabled relays to Apple's servers — no app on that phone needed, and no
+pairing between it and the board. You then read the location back on a Mac via the OpenHaystack
+app, which decrypts the report with your matching private key.
+
+**Setup is mostly OUTSIDE this repo, on a Mac, before you ever flash anything:**
+
+1. Clone [seemoo-lab/openhaystack](https://github.com/seemoo-lab/openhaystack) and generate one
+   keypair (its `generate_keys.py`, or the macOS app's "Add accessory" flow). You get a `.keys`
+   file: a **private key** (keep it on the Mac — never put it in firmware) and a **Base64
+   advertisement key** (this one IS the public key, safe to bake into firmware).
+2. Convert that Base64 string to the hex this firmware's build expects:
+   ```sh
+   python3 -c "import base64,sys; print(base64.b64decode(sys.argv[1]).hex())" "<base64-key>"
+   ```
+3. Build and flash with that hex as an env var:
+   ```sh
+   AIRTAG_PUBKEY_HEX=<56 hex chars> cargo run --release --bin airtag
+   ```
+   (Building with `AIRTAG_PUBKEY_HEX` unset silently falls back to an all-zero key — which Find
+   My won't recognise as valid, so the board just advertises harmlessly instead of tracking
+   anything; a *wrong-length or non-hex* value, however, IS a compile error — see `pubkey.rs`'s
+   const-eval validation. Don't skip setting it and assume it "just worked".)
+4. Add the SAME `.keys` file to the OpenHaystack Mac app so it knows which Find My reports to
+   decrypt as yours.
+5. Wait. Within minutes of being near any iPhone with Find My on, a location report should appear
+   in the OpenHaystack app.
+
+**Honest limitations** (see the module doc comment at the top of `airtag.rs` for the full
+rationale): this broadcasts ONE static public key forever — real AirTags rotate their key roughly
+daily specifically so they can't be tracked long-term by a third party; this PoC firmware can be.
+Fine for "find my own stuff lying around the house/garage," not fine for anything where
+un-trackability matters. No GATT services at all (no Battery/DFU like the other examples) — it's
+pure broadcast-and-sleep, which is also where its power saving comes from: the radio is fully idle
+between ~2-second advertisement bursts, same cadence real AirTags use. Advertising interval/power
+draw have NOT been independently measured on this exact board — treat the "weeks on a LiPo"
+estimate in the module doc comment as a guess, not a spec.
 
 ## Toolchain
 
