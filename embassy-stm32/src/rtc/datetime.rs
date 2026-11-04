@@ -48,7 +48,7 @@ pub struct DateTime {
 }
 
 impl DateTime {
-    #[cfg(all(feature = "low-power", not(feature = "_lp-time-driver")))]
+    #[cfg(all(feature = "low-power", not(feature = "_lp-time-driver"), not(rtc_v1)))]
     pub(crate) const fn millis_from_unix_epoch(&self) -> i64 {
         // overflows 292_471_209 years from 1_970 with a precision less than 1 / 256 (an RTC tick)
 
@@ -224,6 +224,7 @@ impl From<DayOfWeek> for chrono::Weekday {
     }
 }
 
+#[cfg_attr(rtc_v1, allow(dead_code))]
 pub(super) const fn day_of_week_from_u8(v: u8) -> Result<DayOfWeek, Error> {
     Ok(match v {
         1 => DayOfWeek::Monday,
@@ -237,6 +238,7 @@ pub(super) const fn day_of_week_from_u8(v: u8) -> Result<DayOfWeek, Error> {
     })
 }
 
+#[cfg_attr(rtc_v1, allow(dead_code))]
 pub(super) const fn day_of_week_to_u8(dotw: DayOfWeek) -> u8 {
     dotw as u8
 }

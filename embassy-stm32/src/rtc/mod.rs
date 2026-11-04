@@ -17,7 +17,9 @@ use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 
 pub use self::datetime::{DateTime, DayOfWeek, Error as DateTimeError};
+#[cfg(not(rtc_v1))]
 use self::datetime::{day_of_week_from_u8, day_of_week_to_u8};
+#[cfg(not(rtc_v1))]
 use crate::pac::rtc::regs::{Dr, Tr};
 use crate::time::Hertz;
 
@@ -64,6 +66,7 @@ impl RtcTimeProvider {
     /// # Errors
     ///
     /// Will return an `RtcError::InvalidDateTime` if the stored value in the system is not a valid [`DayOfWeek`].
+    #[cfg(not(rtc_v1))]
     pub fn now(&self) -> Result<DateTime, RtcError> {
         self.read(|dr, tr, _ss| {
             let second = bcd2_to_byte((tr.st(), tr.su()));
@@ -89,6 +92,7 @@ impl RtcTimeProvider {
         })
     }
 
+    #[cfg(not(rtc_v1))]
     fn read<R>(&self, mut f: impl FnMut(Dr, Tr, u16) -> Result<R, RtcError>) -> Result<R, RtcError> {
         let r = RTC::regs();
 
@@ -213,7 +217,7 @@ impl Rtc {
     }
 
     pub(self) fn new_inner(rtc_config: RtcConfig) -> Self {
-        #[cfg(not(any(stm32l0, stm32f3, stm32l1, stm32f0, stm32f2)))]
+        #[cfg(not(any(stm32l0, stm32f1, stm32f3, stm32l1, stm32f0, stm32f2)))]
         crate::rcc::enable_and_reset::<RTC>();
 
         let mut this = Self {
@@ -222,14 +226,20 @@ impl Rtc {
             _private: (),
         };
 
-        let frequency = Self::frequency();
-        let async_psc = ((frequency / rtc_config.frequency) - 1) as u8;
-        let sync_psc = (rtc_config.frequency.0 - 1) as u16;
+        #[cfg(rtc_v1)]
+        this.configure(rtc_config.frequency.0);
 
-        this.configure(async_psc, sync_psc);
+        #[cfg(not(rtc_v1))]
+        {
+            let frequency = Self::frequency();
+            let async_psc = ((frequency / rtc_config.frequency) - 1) as u8;
+            let sync_psc = (rtc_config.frequency.0 - 1) as u16;
+
+            this.configure(async_psc, sync_psc);
+        }
 
         // Wait for the clock to update after initialization
-        #[cfg(not(rtc_v2_f2))]
+        #[cfg(not(any(rtc_v2_f2, rtc_v1)))]
         {
             let now = RtcTimeProvider::new().read(|_, _, ss| Ok(ss)).unwrap();
             while now == RtcTimeProvider::new().read(|_, _, ss| Ok(ss)).unwrap() {}
@@ -253,6 +263,7 @@ impl Rtc {
     /// # Errors
     ///
     /// Will return `RtcError::InvalidDateTime` if the datetime is not a valid range.
+    #[cfg(not(rtc_v1))]
     pub fn set_datetime(&mut self, t: DateTime) -> Result<(), RtcError> {
         self.write(true, |rtc| {
             let (ht, hu) = byte_to_bcd2(t.hour());
@@ -295,12 +306,14 @@ impl Rtc {
     }
 
     /// Check if daylight savings time is active.
+    #[cfg(not(rtc_v1))]
     pub fn get_daylight_savings(&self) -> bool {
         let cr = RTC::regs().cr().read();
         cr.bkp()
     }
 
     /// Enable/disable daylight savings time.
+    #[cfg(not(rtc_v1))]
     pub fn set_daylight_savings(&mut self, daylight_savings: bool) {
         self.write(true, |rtc| {
             rtc.cr().modify(|w| w.set_bkp(daylight_savings));
@@ -331,6 +344,7 @@ impl Rtc {
 }
 
 /// Trait applicable to an `Rtc` or an `RtcContainer`
+#[cfg(not(rtc_v1))]
 pub trait AnyRtc {
     /// Set the datetime to a new value.
     fn set_datetime(&mut self, t: DateTime) -> Result<(), RtcError>;
@@ -344,7 +358,7 @@ pub trait AnyRtc {
     fn write_backup_register(&self, register: usize, value: u32);
 }
 
-#[cfg(all(feature = "low-power", not(feature = "_lp-time-driver")))]
+#[cfg(all(feature = "low-power", not(feature = "_lp-time-driver"), not(rtc_v1)))]
 impl AnyRtc for RtcContainer {
     fn set_datetime(&mut self, t: DateTime) -> Result<(), RtcError> {
         critical_section::with(|cs| self.borrow_mut(cs).set_datetime(t))
@@ -367,6 +381,7 @@ impl AnyRtc for RtcContainer {
     }
 }
 
+#[cfg(not(rtc_v1))]
 impl AnyRtc for Rtc {
     fn set_datetime(&mut self, t: DateTime) -> Result<(), RtcError> {
         self.set_datetime(t)
@@ -389,6 +404,7 @@ impl AnyRtc for Rtc {
     }
 }
 
+#[cfg(not(rtc_v1))]
 pub(crate) fn byte_to_bcd2(byte: u8) -> (u8, u8) {
     let mut bcd_high: u8 = 0;
     let mut value = byte;
@@ -401,6 +417,7 @@ pub(crate) fn byte_to_bcd2(byte: u8) -> (u8, u8) {
     (bcd_high, ((bcd_high << 4) | value))
 }
 
+#[cfg(not(rtc_v1))]
 pub(crate) fn bcd2_to_byte(bcd: (u8, u8)) -> u8 {
     let value = bcd.1 | bcd.0 << 4;
 

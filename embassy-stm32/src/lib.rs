@@ -134,7 +134,7 @@ pub mod pka;
 pub mod qspi;
 #[cfg(rng)]
 pub mod rng;
-#[cfg(all(rtc, not(rtc_v1)))]
+#[cfg(rtc)]
 pub mod rtc;
 #[cfg(saes_v1a)]
 pub mod saes;
