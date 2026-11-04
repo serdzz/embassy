@@ -46,6 +46,16 @@ foreach_interrupt! {
     };
 }
 
+#[cfg(all(feature = "rt", stm32f1))]
+foreach_interrupt! {
+    (RTC, rtc, $block:ident, ALARM, $irq:ident) => {
+        #[interrupt]
+        #[allow(non_snake_case)]
+        unsafe fn $irq() {
+        }
+    };
+}
+
 #[cfg(all(feature = "rt", stm32u0))]
 foreach_interrupt! {
     (RTC, rtc, $block:ident, TAMP, $irq:ident) => {
@@ -185,6 +195,18 @@ mod platform {
             });
         }
 
+        #[cfg(stm32f1)]
+        {
+            use crate::pac::pwr::vals::Pdds;
+            crate::pac::PWR.cr().modify(|w| {
+                // Enter Stop (not Standby) when the CPU enters deepsleep.
+                w.set_pdds(Pdds::STOP_MODE);
+                // Voltage regulator in low-power mode during stop.
+                w.set_lpds(true);
+                w.set_cwuf(true);
+            });
+        }
+
         #[cfg(stm32wb)]
         drop(mutex);
 
@@ -207,10 +229,22 @@ mod platform {
 
         #[cfg(stm32l0)]
         crate::pac::PWR.cr().modify(|w| w.set_cwuf(true));
+
+        #[cfg(stm32f1)]
+        crate::pac::PWR.cr().modify(|w| w.set_cwuf(true));
     }
 
     /// Exit stop mode, reinitializing timer and rcc if required
     pub fn exit_stop(_cs: CriticalSection) {
+        #[cfg(stm32f1)]
+        {
+            // After waking from stop the system clock runs from HSI; always
+            // re-initialize the RCC to restore the saved configuration.
+            crate::rcc::reinit_saved(_cs);
+
+            clear_flags();
+        }
+
         #[cfg(any(stm32l0, stm32wl, stm32wb, stm32wba))]
         {
             // stm32wl5x is dual core and we don't want BOTH cores to re-initialize RCC so we hold a lock

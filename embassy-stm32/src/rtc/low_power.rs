@@ -1,11 +1,17 @@
-use embassy_time::{Duration, Instant, TICK_HZ};
+#[cfg(not(rtc_v1))]
+use embassy_time::Duration;
+use embassy_time::{Instant, TICK_HZ};
 
 use super::Rtc;
 use crate::interrupt::typelevel::Interrupt;
+#[cfg(not(rtc_v1))]
 use crate::pac::rtc::vals::Wucksel;
 use crate::peripherals::RTC;
-use crate::rtc::{RtcTimeProvider, SealedInstance};
+#[cfg(not(rtc_v1))]
+use crate::rtc::RtcTimeProvider;
+use crate::rtc::SealedInstance;
 
+#[cfg(not(rtc_v1))]
 fn wucksel_compute_min(val: u32, rtc_hz: u32) -> (Wucksel, u32) {
     *[
         (Wucksel::DIV2, 2),
@@ -19,6 +25,7 @@ fn wucksel_compute_min(val: u32, rtc_hz: u32) -> (Wucksel, u32) {
     .unwrap_or(&(Wucksel::CLOCK_SPARE, rtc_hz))
 }
 
+#[cfg(not(rtc_v1))]
 impl Rtc {
     pub(super) fn millis_from_unix_epoch(&self) -> i64 {
         RtcTimeProvider::new().now().unwrap().millis_from_unix_epoch()
@@ -133,5 +140,90 @@ impl Rtc {
             // RCC.srdamr().modify(|w| w.set_rtcapbamen(true));
             RCC.apb7smenr().modify(|w| w.set_rtcapbsmen(true));
         }
+    }
+}
+
+/// RTC v1 (STM32F1): wakeup from stop is implemented with the ALARM register
+/// (there is no dedicated wakeup timer). The alarm fires when the 32-bit
+/// counter matches the ALR register, and is routed to EXTI line 17.
+#[cfg(rtc_v1)]
+impl Rtc {
+    fn cnt_hz() -> u32 {
+        use core::sync::atomic::Ordering;
+
+        super::_version::RTC_CNT_HZ.load(Ordering::Relaxed).max(1)
+    }
+
+    /// Milliseconds represented by the raw RTC counter value.
+    pub(super) fn millis_from_counter(&self) -> i64 {
+        Self::counter() as i64 * 1_000i64 / Self::cnt_hz() as i64
+    }
+
+    pub(super) fn calc_epoch(&self) -> i64 {
+        self.millis_from_counter() - Instant::now().as_millis() as i64
+    }
+
+    pub(super) fn reset_epoch(&mut self) {
+        self.epoch = self.calc_epoch();
+    }
+
+    /// Start the wakeup alarm with a duration that is as close to but less
+    /// than the requested duration.
+    pub(crate) fn start_wakeup_alarm(&mut self, requested_duration: embassy_time::Duration) {
+        let cnt_hz = Self::cnt_hz();
+        let requested_duration = requested_duration.as_ticks().clamp(0, u32::MAX as u64);
+        let rtc_ticks = (requested_duration * cnt_hz as u64 / TICK_HZ).clamp(1, u32::MAX as u64) as u32;
+
+        let alarm = Self::counter().wrapping_add(rtc_ticks);
+
+        self.write(true, |regs| {
+            regs.alrh().write(|w| w.set_alrh((alarm >> 16) as u16));
+            regs.alrl().write(|w| w.set_alrl(alarm as u16));
+
+            regs.crl().modify(|w| w.set_alrf(false));
+            regs.crh().modify(|w| w.set_alrie(true));
+        });
+
+        trace!(
+            "rtc: start wakeup alarm for {} ms (ticks: {})",
+            rtc_ticks as u64 * 1_000 / cnt_hz as u64,
+            rtc_ticks,
+        );
+    }
+
+    /// Stop the wakeup alarm and return the time elapsed since
+    /// `start_wakeup_alarm` was called.
+    pub(crate) fn stop_wakeup_alarm(&mut self) -> embassy_time::Instant {
+        if RTC::regs().crh().read().alrie() {
+            trace!("rtc: stop wakeup alarm");
+
+            self.write(false, |regs| {
+                regs.crh().modify(|w| w.set_alrie(false));
+            });
+
+            self.write(true, |regs| {
+                regs.crl().modify(|w| w.set_alrf(false));
+            });
+
+            // The RTC Alarm EXTI line (17) is configurable; clear its
+            // pending state.
+            crate::pac::EXTI
+                .pr(0)
+                .modify(|w| w.set_line(RTC::EXTI_WAKEUP_LINE, true));
+
+            <RTC as crate::rtc::SealedInstance>::WakeupInterrupt::unpend();
+        }
+
+        Instant::from_millis((self.millis_from_counter() - self.epoch).try_into().unwrap())
+    }
+
+    pub(super) fn enable_wakeup_line(&mut self) {
+        use crate::pac::EXTI;
+
+        <RTC as crate::rtc::SealedInstance>::WakeupInterrupt::unpend();
+        unsafe { <RTC as crate::rtc::SealedInstance>::WakeupInterrupt::enable() };
+
+        EXTI.rtsr(0).modify(|w| w.set_line(RTC::EXTI_WAKEUP_LINE, true));
+        EXTI.imr(0).modify(|w| w.set_line(RTC::EXTI_WAKEUP_LINE, true));
     }
 }
